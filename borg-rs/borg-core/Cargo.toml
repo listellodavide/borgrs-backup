@@ -1,0 +1,43 @@
+[package]
+name = "borg-core"
+version.workspace = true
+edition.workspace = true
+description = "Core library for Borg-Rust backup system"
+
+[lib]
+name = "borg_core"
+path = "src/lib.rs"
+
+[dependencies]
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bincode.workspace = true
+aes-gcm.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+argon2.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+zstd.workspace = true
+lz4_flex.workspace = true
+flate2.workspace = true
+lzma-rs.workspace = true
+fastcdc.workspace = true
+nix.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+walkdir.workspace = true
+globset.workspace = true
+sled.workspace = true
+chrono.workspace = true
+russh.workspace = true
+russh-keys.workspace = true
+regex-lite.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

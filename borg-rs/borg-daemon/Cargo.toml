@@ -1,0 +1,55 @@
+[package]
+name = "borg-daemon"
+version = "0.1.0"
+edition = "2021"
+authors = ["Borg-Rust Team"]
+description = "Linux daemon for scheduled backups using Borg-Rust"
+license = "BSD-3-Clause"
+
+[[bin]]
+name = "borgd"
+path = "src/main.rs"
+
+[dependencies]
+borg-core = { path = "../borg-core" }
+
+# Async runtime
+tokio = { workspace = true, features = ["full", "signal"] }
+
+# Daemon and systemd integration
+daemonize = "0.5"
+sd-notify = "0.4"
+
+# Configuration
+serde = { workspace = true, features = ["derive"] }
+serde_yaml = "0.9"
+toml = { workspace = true }
+
+# Scheduling
+cron = "0.12"
+chrono = { workspace = true, features = ["serde"] }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+tracing-journald = { workspace = true }
+
+# CLI
+clap = { workspace = true, features = ["derive"] }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# File watching for config changes
+notify = { workspace = true }
+
+# Process management
+nix = { workspace = true, features = ["signal", "process", "user"] }
+
+# Metrics and health
+prometheus = "0.13"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio-test = "0.4"

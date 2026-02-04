@@ -1,0 +1,11 @@
+[Unit]
+Description=Borg-Rust Backup Timer for %i
+Documentation=https://github.com/borg-rust/borg-rust
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=3600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

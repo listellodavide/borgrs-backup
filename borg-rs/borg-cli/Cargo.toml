@@ -1,0 +1,58 @@
+[package]
+name = "borg-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Borg-Rust Team"]
+description = "Command-line interface for Borg-Rust backup system"
+license = "BSD-3-Clause"
+
+[[bin]]
+name = "borg"
+path = "src/main.rs"
+
+[dependencies]
+borg-core = { path = "../borg-core" }
+
+# CLI framework
+clap = { workspace = true, features = ["derive", "env", "wrap_help"] }
+blake2 = "0.10"
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+sha2 = "0.10"
+zstd = { workspace = true }
+
+# Progress and output
+indicatif = "0.17"
+console = "0.15"
+tabled = "0.15"
+
+# Configuration
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+# Date/time
+chrono = { workspace = true, features = ["serde"] }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# Terminal password input
+rpassword = "7.3"
+
+# Human-readable sizes
+humansize = "2.1"
+
+# Glob patterns for paths
+glob = "0.3"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+assert_cmd = "2.0"
+predicates = "3.0"

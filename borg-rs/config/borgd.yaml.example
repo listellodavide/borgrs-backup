@@ -1,0 +1,165 @@
+# Borg-Rust Daemon Configuration
+# ================================
+# Copy this file to /etc/borg-rust/borgd.yaml and customize
+
+# Global settings
+global:
+  # Maximum number of concurrent backup jobs (default: 1)
+  max_concurrent_jobs: 1
+
+  # Cache directory for chunk index cache
+  cache_dir: /var/cache/borg-rust
+
+  # Lock directory for repository locks
+  lock_dir: /var/lock/borg-rust
+
+  # Default compression algorithm: none, lz4, zstd, zlib, lzma
+  default_compression: zstd
+
+  # Default compression level (1-22 for zstd, 1-9 for others)
+  default_compression_level: 3
+
+  # Nice value for backup processes (-20 to 19, higher = lower priority)
+  nice_level: 10
+
+  # IO nice class (0=none, 1=realtime, 2=best-effort, 3=idle)
+  ionice_class: 3
+
+  # Prometheus metrics endpoint port (0 = disabled)
+  metrics_port: 9100
+
+  # Health check interval in seconds
+  health_check_interval: 60
+
+# Repository configurations
+repositories:
+  - name: local-backup
+    path: /var/lib/borg-rust/backups
+    passphrase:
+      type: credential
+      name: borgd-passphrase
+
+  - name: remote-nas
+    path: ssh://backup@nas.local/backups/server1
+    passphrase:
+      type: env
+      var: BORG_PASSPHRASE_NAS
+    ssh_key: /root/.ssh/backup_key
+    remote_rate_limit: 10240  # KB/s
+
+  - name: s3-backup
+    path: /mnt/s3-borg/backups
+    passphrase:
+      type: file
+      path: /etc/borg-rust/secrets/s3-passphrase
+
+# Backup jobs
+jobs:
+  # System backup - daily at 2 AM
+  - name: system
+    schedule: "0 0 2 * * *"
+    repository: local-backup
+    paths:
+      - /etc
+      - /var/lib
+      - /root
+      - /home
+    exclude_patterns:
+      - "*.pyc"
+      - "__pycache__"
+      - ".cache"
+      - ".local/share/Trash"
+      - "*.tmp"
+      - "*.log"
+      - "node_modules"
+      - ".npm"
+      - ".cargo/registry"
+      - "target/debug"
+      - "target/release"
+    exclude_caches: true
+    exclude_if_present:
+      - .nobackup
+      - CACHEDIR.TAG
+    one_file_system: true
+    noatime: true
+    compression: zstd
+    compression_level: 6
+    archive_name: "{hostname}-system-{now:%Y-%m-%d_%H:%M:%S}"
+    prune:
+      keep_within: "1d"
+      keep_daily: 7
+      keep_weekly: 4
+      keep_monthly: 6
+      keep_yearly: 2
+    pre_command: "systemctl stop myapp || true"
+    post_command: "systemctl start myapp || true"
+    notifications:
+      on_success: false
+      on_failure: true
+      webhook_url: "https://hooks.slack.com/services/xxx/yyy/zzz"
+    priority: 100
+    enabled: true
+    retry:
+      max_retries: 3
+      initial_delay: 300
+      max_delay: 3600
+      backoff_multiplier: 2.0
+
+  # Database backup - every 6 hours
+  - name: database
+    schedule: "0 0 */6 * * *"
+    repository: remote-nas
+    paths:
+      - /var/lib/postgresql
+    exclude_patterns:
+      - "pg_stat_tmp/*"
+    pre_command: |
+      pg_dumpall -U postgres > /var/backups/postgres/all-databases.sql
+    archive_name: "{hostname}-database-{now:%Y-%m-%d_%H:%M:%S}"
+    compression: zstd
+    compression_level: 9
+    prune:
+      keep_hourly: 6
+      keep_daily: 7
+      keep_weekly: 4
+    priority: 50
+    enabled: true
+
+  # Docker volumes - daily at 3 AM
+  - name: docker-volumes
+    schedule: "0 0 3 * * *"
+    repository: local-backup
+    paths:
+      - /var/lib/docker/volumes
+    exclude_patterns:
+      - "*/buildkit/*"
+      - "*/_data/lost+found"
+    pre_command: |
+      docker stop $(docker ps -q) 2>/dev/null || true
+    post_command: |
+      docker start $(docker ps -aq) 2>/dev/null || true
+    archive_name: "{hostname}-docker-{now:%Y-%m-%d_%H:%M:%S}"
+    prune:
+      keep_daily: 7
+      keep_weekly: 4
+    priority: 150
+    enabled: true
+
+  # Hourly incremental backup
+  - name: hourly-docs
+    schedule: "0 0 * * * *"
+    repository: local-backup
+    paths:
+      - /home/user/Documents
+      - /home/user/Projects
+    exclude_patterns:
+      - "*.swp"
+      - "*~"
+      - ".git/objects"
+    archive_name: "{hostname}-docs-{now:%Y-%m-%d_%H:%M:%S}"
+    compression: lz4  # Fast compression for hourly backups
+    prune:
+      keep_hourly: 24
+      keep_daily: 7
+    priority: 200
+    enabled: false  # Disabled by default

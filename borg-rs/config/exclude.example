@@ -1,0 +1,101 @@
+# Borg-Rust Exclusion Patterns
+# ============================
+# One pattern per line. Lines starting with # are comments.
+# 
+# Pattern types:
+# - Shell patterns: *.log, cache/*, /home/*/.cache
+# - Regex patterns (prefix with re:): re:.*\.pyc$
+# - Path prefix (prefix with pp:): pp:/var/cache
+# - Path full match (prefix with pf:): pf:/var/log/syslog
+#
+# Special modifiers:
+# - ! prefix inverts (include instead of exclude): !important.txt
+# - Case insensitive with fm: prefix: fm:*.TMP
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+
+# Log files
+*.log
+*.log.*
+
+# Cache directories
+.cache
+.local/share/Trash
+.thumbnails
+
+# Python
+*.pyc
+*.pyo
+__pycache__
+.pytest_cache
+.mypy_cache
+.tox
+*.egg-info
+
+# Node.js
+node_modules
+.npm
+.yarn
+
+# Rust
+target/debug
+target/release
+.cargo/registry
+.cargo/git
+
+# Go
+go/pkg/mod
+
+# Java
+*.class
+.gradle
+build/
+
+# IDE and editors
+.idea
+.vscode
+*.sublime-*
+.project
+.settings
+
+# Version control (you might want to back these up)
+# .git
+# .svn
+# .hg
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Virtualization
+*.vmdk
+*.vdi
+*.qcow2
+
+# Container related
+# /var/lib/docker/overlay2
+
+# System directories (be careful!)
+# /proc
+# /sys
+# /dev
+# /run
+# /tmp
+# /var/tmp
+
+# Large media (optional)
+# *.mp4
+# *.mkv
+# *.avi
+# *.mov
+
+# Encrypted private keys (back up separately with extra security)
+# *.pem
+# *.key
+# id_rsa
+# id_ed25519

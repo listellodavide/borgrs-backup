@@ -1,0 +1,54 @@
+[Unit]
+Description=Borg-Rust Backup Daemon
+Documentation=https://github.com/borg-rust/borg-rust
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/borgd --config /etc/borg-rust/borgd.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+
+# Allow access to backup directories (customize as needed)
+ReadWritePaths=/var/lib/borg-rust
+ReadWritePaths=/var/cache/borg-rust
+ReadWritePaths=/var/log/borg-rust
+ReadWritePaths=/run/borgd
+
+# State and runtime directories
+StateDirectory=borg-rust
+CacheDirectory=borg-rust
+LogsDirectory=borg-rust
+RuntimeDirectory=borgd
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# Watchdog
+WatchdogSec=300
+
+# Environment
+Environment=RUST_LOG=info
+
+# Credentials support
+LoadCredential=borgd-passphrase:/etc/borg-rust/passphrase
+
+[Install]
+WantedBy=multi-user.target

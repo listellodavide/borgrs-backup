@@ -1,0 +1,36 @@
+[Unit]
+Description=Borg-Rust Backup Job (%i)
+Documentation=https://github.com/borg-rust/borg-rust
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/borg create --stats --compression zstd ${BORG_OPTS} ::%i-{now:%%Y-%%m-%%d_%%H:%%M:%%S} ${BACKUP_PATHS}
+ExecStartPost=/usr/bin/borg prune --stats --keep-daily=7 --keep-weekly=4 --keep-monthly=6 ${BORG_OPTS}
+ExecStartPost=/usr/bin/borg compact ${BORG_OPTS}
+
+# Environment file with BORG_REPO, BORG_PASSPHRASE, BACKUP_PATHS, etc.
+EnvironmentFile=/etc/borg-rust/jobs/%i.env
+
+# Security
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+# Allow reading backup sources
+ReadOnlyPaths=/home
+ReadOnlyPaths=/etc
+ReadOnlyPaths=/var
+
+# Allow writing to repository location
+ReadWritePaths=/var/lib/borg-rust
+
+# Nice values
+Nice=19
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target
