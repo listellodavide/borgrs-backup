@@ -1,0 +1,14 @@
+/mnt/projects/projects_2026/borgrs-backup/borg-rs/target/debug/deps/serde-ca7a5e29a7d25753.d: /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /mnt/projects/projects_2026/borgrs-backup/borg-rs/target/debug/build/serde-5e55967fd4a49097/out/private.rs
+
+/mnt/projects/projects_2026/borgrs-backup/borg-rs/target/debug/deps/libserde-ca7a5e29a7d25753.rlib: /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /mnt/projects/projects_2026/borgrs-backup/borg-rs/target/debug/build/serde-5e55967fd4a49097/out/private.rs
+
+/mnt/projects/projects_2026/borgrs-backup/borg-rs/target/debug/deps/libserde-ca7a5e29a7d25753.rmeta: /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /mnt/projects/projects_2026/borgrs-backup/borg-rs/target/debug/build/serde-5e55967fd4a49097/out/private.rs
+
+/home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/dukov82/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/mnt/projects/projects_2026/borgrs-backup/borg-rs/target/debug/build/serde-5e55967fd4a49097/out/private.rs:
+
+# env-dep:OUT_DIR=/mnt/projects/projects_2026/borgrs-backup/borg-rs/target/debug/build/serde-5e55967fd4a49097/out
