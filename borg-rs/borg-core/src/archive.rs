@@ -736,4 +736,78 @@ mod tests {
         assert_eq!(archive.stats.nfiles, 3);
         assert_eq!(archive.stats.ndirs, 2); // source + subdir
     }
+
+    #[test]
+    fn test_init_repo_add_two_files_and_verify() {
+        // Create temporary directory for test
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().join("test-repo");
+        let source_dir = temp_dir.path().join("source");
+
+        // Create source directory with 2 text files
+        fs::create_dir_all(&source_dir).unwrap();
+        let file1_content = "This is the first test file with some content.";
+        let file2_content = "This is the second test file with different content.";
+        fs::write(source_dir.join("file1.txt"), file1_content).unwrap();
+        fs::write(source_dir.join("file2.txt"), file2_content).unwrap();
+
+        // Step 1: Initialize repository with encryption
+        let mut repo = Repository::init(&repo_path, Some("test-passphrase"), None).unwrap();
+        assert!(repo.config().encrypted, "Repository should be encrypted");
+
+        // Step 2: Create an archive with the 2 files
+        let creator = ArchiveCreator::new(&mut repo);
+        let archive = creator
+            .create("test-archive", &[source_dir.clone()], Some("Test archive with 2 files".to_string()))
+            .unwrap();
+
+        // Step 3: Verify archive statistics
+        assert_eq!(archive.stats.nfiles, 2, "Should have 2 files");
+        assert_eq!(archive.stats.ndirs, 1, "Should have 1 directory (source)");
+        assert!(archive.stats.original_size > 0, "Original size should be greater than 0");
+        assert!(archive.stats.nchunks > 0, "Should have at least one chunk");
+
+        // Step 4: Verify archive metadata
+        assert_eq!(archive.metadata.name, "test-archive");
+        assert_eq!(archive.metadata.comment, Some("Test archive with 2 files".to_string()));
+
+        // Step 5: Verify the archive items contain our files
+        let file_items: Vec<_> = archive.items.iter()
+            .filter(|item| item.item_type == ItemType::File)
+            .collect();
+        assert_eq!(file_items.len(), 2, "Should have exactly 2 file items");
+
+        // Verify file names
+        let file_names: Vec<String> = file_items.iter()
+            .map(|item| item.path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert!(file_names.contains(&"file1.txt".to_string()), "Should contain file1.txt");
+        assert!(file_names.contains(&"file2.txt".to_string()), "Should contain file2.txt");
+
+        // Step 6: Verify chunks are stored in repository
+        for item in file_items {
+            for chunk_id in &item.chunks {
+                assert!(repo.has_chunk(chunk_id), "Chunk {} should exist in repository", chunk_id);
+            }
+        }
+
+        // Step 7: Reopen repository and verify archive is persisted
+        drop(repo); // Close the repository
+        let repo = Repository::open(&repo_path, Some("test-passphrase")).unwrap();
+        
+        // Load manifest and verify archive exists
+        let manifest = repo.load_manifest().unwrap();
+        assert_eq!(manifest.archives.len(), 1, "Should have 1 archive in manifest");
+        assert_eq!(manifest.archives[0].name, "test-archive");
+
+        // Step 8: Verify we can retrieve the archive chunk (it's encrypted, so we just verify it exists)
+        let archive_ref = &manifest.archives[0];
+        let archive_chunk = repo.get_chunk(&archive_ref.id).unwrap();
+        assert!(archive_chunk.data.len() > 0, "Archive chunk should contain data");
+        
+        println!("✓ Repository initialized successfully");
+        println!("✓ 2 text files added to archive");
+        println!("✓ Archive saved with {} chunks", archive.stats.nchunks);
+        println!("✓ Repository can be reopened and archive retrieved");
+    }
 }

@@ -66,9 +66,23 @@ pub async fn get_passphrase(prompt: &str) -> Result<String> {
 
 /// Open repository with passphrase handling
 pub async fn open_repository(repo_path: &str) -> Result<Repository> {
-    // For now, only local repositories are supported in core
-    Repository::open(std::path::Path::new(repo_path), None)
-        .map_err(|e| anyhow::anyhow!("Failed to open repository: {}", e))
+    let path = std::path::Path::new(repo_path);
+    
+    // Try opening without passphrase first (for unencrypted repos)
+    match Repository::open(path, None) {
+        Ok(repo) => Ok(repo),
+        Err(e) => {
+            // Check if it's a passphrase error
+            if matches!(e, borg_core::error::BorgError::InvalidPassphrase) {
+                // Get passphrase and retry
+                let passphrase = get_passphrase("Enter passphrase: ").await?;
+                Repository::open(path, Some(&passphrase))
+                    .map_err(|e| anyhow::anyhow!("Failed to open repository: {}", e))
+            } else {
+                Err(anyhow::anyhow!("Failed to open repository: {}", e))
+            }
+        }
+    }
 }
 
 /// Format size in human-readable form
