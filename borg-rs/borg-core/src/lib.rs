@@ -13,6 +13,7 @@ pub mod archive;
 pub mod exclusion;
 pub mod remote;
 pub mod error;
+pub mod verification;
 
 pub use error::{BorgError, Result};
 
@@ -24,5 +25,6 @@ pub mod prelude {
     pub use crate::repository::{Repository, RepositoryConfig};
     pub use crate::archive::{Archive, ArchiveItem};
     pub use crate::exclusion::ExclusionList;
+    pub use crate::verification::{VerifyReport, ArchiveVerifyReport};
     pub use crate::error::{BorgError, Result};
 }

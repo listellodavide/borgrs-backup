@@ -128,7 +128,7 @@ pub struct Repository {
     /// Compression provider
     compressor: Compressor,
     /// Set of known chunk IDs (loaded from index)
-    chunk_index: HashSet<ChunkId>,
+    pub(crate) chunk_index: HashSet<ChunkId>,
     /// Lock information
     lock: Option<LockInfo>,
 }
