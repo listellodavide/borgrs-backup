@@ -17,6 +17,8 @@ struct ScheduledJob {
     schedule: Schedule,
     priority: u32,
     last_scheduled: Option<DateTime<Utc>>,
+    last_success: Option<DateTime<Utc>>,
+    missed_runs: u32,
 }
 
 impl PartialEq for ScheduledJob {
@@ -82,6 +84,8 @@ impl Scheduler {
                             schedule,
                             priority: job.priority,
                             last_scheduled: None,
+                            last_success: None,
+                            missed_runs: 0,
                         });
                     }
                 }
@@ -132,7 +136,32 @@ impl Scheduler {
                         schedule: job.schedule,
                         priority: job.priority,
                         last_scheduled: Some(Utc::now()),
+                        last_success: Some(Utc::now()),
+                        missed_runs: 0,
                     });
+                }
+            } else {
+                // Keep other jobs
+                self.jobs.push(job);
+            }
+        }
+    }
+
+    /// Mark a job as failed (for missed runs detection)
+    pub fn job_failed(&mut self, job_name: &str) {
+        let jobs: Vec<_> = self.jobs.drain().collect();
+        
+        for job in jobs {
+            if job.name == job_name {
+                // Increment missed runs counter
+                let mut updated_job = job;
+                updated_job.missed_runs += 1;
+                updated_job.last_scheduled = Some(Utc::now());
+                
+                // Reschedule this job
+                if let Some(next_run) = updated_job.schedule.upcoming(Utc).next() {
+                    debug!("Rescheduled failed job '{}' for {}", job_name, next_run);
+                    self.jobs.push(updated_job);
                 }
             } else {
                 // Keep other jobs
@@ -173,6 +202,8 @@ impl Scheduler {
                     schedule,
                     priority: 0, // Highest priority for manual runs
                     last_scheduled: Some(Utc::now()),
+                    last_success: None,
+                    missed_runs: 0,
                 });
                 return true;
             }
@@ -196,6 +227,33 @@ impl Scheduler {
             .iter()
             .find(|job| job.name == job_name)
             .map(|job| job.next_run)
+    }
+
+    /// Check if a job has missed runs (based on threshold)
+    pub fn has_missed_runs(&self, job_name: &str, max_missed: u32) -> bool {
+        self.jobs
+            .iter()
+            .find(|job| job.name == job_name)
+            .map(|job| job.missed_runs > max_missed)
+            .unwrap_or(false)
+    }
+
+    /// Get last success time for a job
+    pub fn last_success_time(&self, job_name: &str) -> Option<DateTime<Utc>> {
+        self.jobs
+            .iter()
+            .find(|job| job.name == job_name)
+            .map(|job| job.last_success)
+            .flatten()
+    }
+
+    /// Get missed runs count for a job
+    pub fn missed_runs_count(&self, job_name: &str) -> u32 {
+        self.jobs
+            .iter()
+            .find(|job| job.name == job_name)
+            .map(|job| job.missed_runs)
+            .unwrap_or(0)
     }
 }
 
@@ -280,5 +338,35 @@ mod tests {
         let end = Utc::now();
         let expected = scheduler.expected_runs("hourly", start, end);
         assert!(!expected.is_empty());
+    }
+
+    #[test]
+    fn test_job_completion_tracking() {
+        let jobs = vec![create_test_job("daily", "0 0 2 * * *", 100)];
+        let mut scheduler = Scheduler::new(jobs);
+        
+        // Initially no last success
+        assert_eq!(scheduler.last_success_time("daily"), None);
+        
+        // Mark job as completed
+        scheduler.job_completed("daily");
+        
+        // Should now have a last success time
+        assert!(scheduler.last_success_time("daily").is_some());
+    }
+
+    #[test]
+    fn test_missed_runs_tracking() {
+        let jobs = vec![create_test_job("daily", "0 0 2 * * *", 100)];
+        let mut scheduler = Scheduler::new(jobs);
+        
+        // Initially no missed runs
+        assert_eq!(scheduler.missed_runs_count("daily"), 0);
+        
+        // Mark job as failed
+        scheduler.job_failed("daily");
+        
+        // Should now have one missed run
+        assert_eq!(scheduler.missed_runs_count("daily"), 1);
     }
 }

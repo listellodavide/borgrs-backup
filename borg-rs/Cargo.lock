@@ -568,12 +568,13 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "url",
  "zstd",
 ]
 
 [[package]]
 name = "borg-core"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "aes-gcm",
  "anyhow",

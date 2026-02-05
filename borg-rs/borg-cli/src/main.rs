@@ -107,8 +107,24 @@ enum Commands {
 
 #[derive(Args, Debug)]
 struct InitArgs {
+    /// WebDAV repository URL (http)
+    #[arg(long, value_name = "URL", conflicts_with = "webdavs_url")]
+    webdav_url: Option<String>,
+
+    /// WebDAV repository URL (https)
+    #[arg(long, value_name = "URL", conflicts_with = "webdav_url")]
+    webdavs_url: Option<String>,
+
+    /// WebDAV username (optional, overrides URL user)
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password (optional, overrides URL password)
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
+
     /// Encryption mode (none, repokey, keyfile, repokey-blake2, keyfile-blake2)
-    #[arg(short, long, default_value = "repokey")]
+    #[arg(short, long, default_value = "repokey", num_args = 0..=1, default_missing_value = "repokey")]
     encryption: String,
 
     /// Create parent directories as needed
@@ -656,6 +672,11 @@ async fn main() -> Result<()> {
 
     if let Err(e) = result {
         eprintln!("Error: {}", e);
+        let mut source = e.source();
+        while let Some(err) = source {
+            eprintln!("Caused by: {}", err);
+            source = err.source();
+        }
         std::process::exit(1);
     }
 

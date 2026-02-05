@@ -13,7 +13,13 @@ use super::get_passphrase;
 use crate::{Cli, InitArgs};
 
 pub async fn run(cli: &Cli, args: &InitArgs) -> Result<()> {
-    let repo_str = super::get_repo_path(cli)?;
+    let repo_str = if let Some(url) = &args.webdav_url {
+        normalize_webdav_url(url, "webdav", args.webdav_user.as_deref(), args.webdav_pass.as_deref())?
+    } else if let Some(url) = &args.webdavs_url {
+        normalize_webdav_url(url, "webdavs", args.webdav_user.as_deref(), args.webdav_pass.as_deref())?
+    } else {
+        super::get_repo_path(cli)?
+    };
     let storage_config = parse_storage_config(&repo_str)?;
 
     // Parse encryption mode (simplified for now)
@@ -102,6 +108,40 @@ fn parse_size(s: &str) -> Result<u64> {
     };
 
     Ok(num * multiplier)
+}
+
+fn normalize_webdav_url(
+    value: &str,
+    scheme: &str,
+    username: Option<&str>,
+    password: Option<&str>,
+) -> Result<String> {
+    let trimmed = value.trim();
+    let with_scheme = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else if trimmed.starts_with("webdav://")
+        || trimmed.starts_with("webdavs://")
+        || trimmed.starts_with("dav://")
+        || trimmed.starts_with("davs://")
+    {
+        trimmed.to_string()
+    } else {
+        format!("{}://{}", scheme, trimmed)
+    };
+
+    let mut url = url::Url::parse(&with_scheme)
+        .map_err(|e| anyhow::anyhow!("Invalid WebDAV URL '{}': {}", with_scheme, e))?;
+
+    if let Some(user) = username {
+        url.set_username(user)
+            .map_err(|_| anyhow::anyhow!("Invalid WebDAV username"))?;
+    }
+    if let Some(pass) = password {
+        url.set_password(Some(pass))
+            .map_err(|_| anyhow::anyhow!("Invalid WebDAV password"))?;
+    }
+
+    Ok(url.to_string())
 }
 
 #[cfg(test)]

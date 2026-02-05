@@ -111,7 +111,7 @@ impl HealthMonitor {
                 }
 
                 let overdue = now - expected.last().unwrap();
-                if overdue.num_minutes() as u64 >= threshold_minutes {
+                if overdue.num_minutes().abs() as u64 >= threshold_minutes {
                     self.send_missed_alert(&job.name, expected.last().unwrap(), last_run).await;
                 }
             }

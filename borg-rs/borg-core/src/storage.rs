@@ -62,7 +62,13 @@ pub fn build_operator(config: StorageConfig) -> Result<Operator> {
 /// - `dav://user:pass@host:port/path` (WebDAV)
 /// - `webdav://host/path` (WebDAV)
 pub fn parse_storage_config(repo_str: &str) -> Result<StorageConfig> {
-    if repo_str.starts_with("dav://") || repo_str.starts_with("davs://") || repo_str.starts_with("webdav://") || repo_str.starts_with("webdavs://") {
+    if repo_str.starts_with("dav://")
+        || repo_str.starts_with("davs://")
+        || repo_str.starts_with("webdav://")
+        || repo_str.starts_with("webdavs://")
+        || repo_str.starts_with("http://")
+        || repo_str.starts_with("https://")
+    {
         let url = Url::parse(repo_str)
             .map_err(|e| BorgError::InvalidArgument(format!("Invalid WebDAV URL: {}", e)))?;
         

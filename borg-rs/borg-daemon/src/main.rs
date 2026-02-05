@@ -305,7 +305,7 @@ async fn run_scheduler(state: Arc<DaemonState>) {
             tokio::select! {
                 _ = tokio::time::sleep(delay_duration) => {
                     // Execute the job
-                    if let Err(e) = execute_job(&state, &job_name).await {
+                    if let Err(e) = execute_job(&state, job_name.as_str()).await {
                         error!("Job '{}' failed: {}", job_name, e);
                     }
                 }
