@@ -16,6 +16,7 @@ struct ScheduledJob {
     next_run: DateTime<Utc>,
     schedule: Schedule,
     priority: u32,
+    last_scheduled: Option<DateTime<Utc>>,
 }
 
 impl PartialEq for ScheduledJob {
@@ -80,6 +81,7 @@ impl Scheduler {
                             next_run,
                             schedule,
                             priority: job.priority,
+                            last_scheduled: None,
                         });
                     }
                 }
@@ -93,6 +95,25 @@ impl Scheduler {
     /// Get the next job to run and its scheduled time
     pub fn next_job(&self) -> Option<(String, DateTime<Utc>)> {
         self.jobs.peek().map(|job| (job.name.clone(), job.next_run))
+    }
+
+    /// Get expected runs between timestamps
+    pub fn expected_runs(
+        &self,
+        job_name: &str,
+        after: DateTime<Utc>,
+        before: DateTime<Utc>,
+    ) -> Vec<DateTime<Utc>> {
+        self.jobs
+            .iter()
+            .find(|job| job.name == job_name)
+            .map(|job| {
+                job.schedule
+                    .after(&after)
+                    .take_while(|dt| *dt <= before)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
     }
 
     /// Mark a job as completed and reschedule it
@@ -110,6 +131,7 @@ impl Scheduler {
                         next_run,
                         schedule: job.schedule,
                         priority: job.priority,
+                        last_scheduled: Some(Utc::now()),
                     });
                 }
             } else {
@@ -150,6 +172,7 @@ impl Scheduler {
                     next_run: Utc::now(),
                     schedule,
                     priority: 0, // Highest priority for manual runs
+                    last_scheduled: Some(Utc::now()),
                 });
                 return true;
             }
@@ -165,6 +188,14 @@ impl Scheduler {
     /// Get job configuration by name
     pub fn get_job_config(&self, job_name: &str) -> Option<&BackupJob> {
         self.job_configs.iter().find(|j| j.name == job_name)
+    }
+
+    /// Get the next expected run time for a job
+    pub fn next_expected_run(&self, job_name: &str) -> Option<DateTime<Utc>> {
+        self.jobs
+            .iter()
+            .find(|job| job.name == job_name)
+            .map(|job| job.next_run)
     }
 }
 
@@ -238,5 +269,16 @@ mod tests {
         assert_eq!(name, "daily");
         // Job should be scheduled very close to now
         assert!((Utc::now() - time).num_seconds().abs() < 5);
+    }
+
+    #[test]
+    fn test_expected_runs_between() {
+        let jobs = vec![create_test_job("hourly", "0 0 * * * *", 50)];
+        let scheduler = Scheduler::new(jobs);
+
+        let start = Utc::now() - chrono::Duration::hours(3);
+        let end = Utc::now();
+        let expected = scheduler.expected_runs("hourly", start, end);
+        assert!(!expected.is_empty());
     }
 }

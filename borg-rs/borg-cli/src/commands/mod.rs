@@ -8,6 +8,8 @@ pub mod info;
 pub mod delete;
 pub mod prune;
 pub mod check;
+pub mod verify;
+pub mod search;
 pub mod mount;
 pub mod umount;
 pub mod diff;
@@ -21,6 +23,7 @@ pub mod benchmark;
 
 use anyhow::{Context, Result};
 use borg_core::repository::Repository;
+use borg_core::storage::{parse_storage_config, build_operator};
 
 /// Get repository path from CLI args or environment
 pub fn get_repo_path(cli: &crate::Cli) -> Result<String> {
@@ -65,18 +68,19 @@ pub async fn get_passphrase(prompt: &str) -> Result<String> {
 }
 
 /// Open repository with passphrase handling
-pub async fn open_repository(repo_path: &str) -> Result<Repository> {
-    let path = std::path::Path::new(repo_path);
+pub async fn open_repository(repo_str: &str) -> Result<Repository> {
+    let config = parse_storage_config(repo_str)?;
+    let op = build_operator(config)?;
     
     // Try opening without passphrase first (for unencrypted repos)
-    match Repository::open(path, None) {
+    match Repository::open(op.clone(), None).await {
         Ok(repo) => Ok(repo),
         Err(e) => {
             // Check if it's a passphrase error
             if matches!(e, borg_core::error::BorgError::InvalidPassphrase) {
                 // Get passphrase and retry
                 let passphrase = get_passphrase("Enter passphrase: ").await?;
-                Repository::open(path, Some(&passphrase))
+                Repository::open(op, Some(&passphrase)).await
                     .map_err(|e| anyhow::anyhow!("Failed to open repository: {}", e))
             } else {
                 Err(anyhow::anyhow!("Failed to open repository: {}", e))

@@ -31,6 +31,9 @@ global:
   # Health check interval in seconds
   health_check_interval: 60
 
+  # Heartbeat file path (set null to disable)
+  heartbeat_path: /run/borgd/borgd.heartbeat
+
 # Repository configurations
 repositories:
   - name: local-backup
@@ -96,6 +99,9 @@ jobs:
     notifications:
       on_success: false
       on_failure: true
+      failure_threshold: 3
+      missed_threshold_minutes: 180
+      slack_webhook_url: "https://hooks.slack.com/services/xxx/yyy/zzz"
       webhook_url: "https://hooks.slack.com/services/xxx/yyy/zzz"
     priority: 100
     enabled: true

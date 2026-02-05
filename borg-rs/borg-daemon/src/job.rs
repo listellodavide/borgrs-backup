@@ -58,7 +58,7 @@ pub async fn run_backup_job(job: &BackupJob) -> Result<JobStats> {
         exclusion_matcher,
         &compression,
         job,
-    )?;
+    ).await?;
 
     // Run prune if configured (disabled for now - Pruner missing in core)
     /*
@@ -149,9 +149,9 @@ fn resolve_compression(job: &BackupJob) -> Result<Compressor> {
 
 /// Generate archive name from template
 fn generate_archive_name(template: &str) -> Result<String> {
-    let hostname = nix::unistd::gethostname()?
-        .to_string_lossy()
-        .to_string();
+    let hostname = std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| "unknown".to_string());
     let now = chrono::Local::now();
 
     let name = template
@@ -164,14 +164,17 @@ fn generate_archive_name(template: &str) -> Result<String> {
 }
 
 /// Open or connect to repository
-async fn open_repository(repo_path: &str) -> Result<Repository> {
-    // Local repository
+async fn open_repository(repo_str: &str) -> Result<Repository> {
+    use borg_core::storage::{parse_storage_config, build_operator};
+    let config = parse_storage_config(repo_str)?;
+    let op = build_operator(config)?;
+    
     // For now, assume no passphrase or handle it if available in config
-    Repository::open(Path::new(repo_path), None).context("Failed to open repository")
+    Repository::open(op, None).await.context("Failed to open repository")
 }
 
 /// Create a backup archive
-fn create_archive(
+async fn create_archive(
     repo: &mut Repository,
     archive_name: &str,
     paths: &[PathBuf],
@@ -186,8 +189,8 @@ fn create_archive(
 
     // Note: one_file_system, read_special, etc. are not yet in core ArchiveCreator
     
-    // Create the archive (synchronous)
-    creator.create(archive_name, paths, job.archive_name.clone().into())
+    // Create the archive (async)
+    creator.create(archive_name, paths, job.archive_name.clone().into()).await
         .map_err(|e| anyhow::anyhow!("Failed to create archive: {}", e))
 }
 

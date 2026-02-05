@@ -58,6 +58,10 @@ pub struct GlobalConfig {
     /// Health check interval in seconds
     #[serde(default = "default_health_interval")]
     pub health_check_interval: u64,
+
+    /// Optional heartbeat file path (written on each health check)
+    #[serde(default = "default_heartbeat_path")]
+    pub heartbeat_path: Option<PathBuf>,
 }
 
 fn default_max_concurrent() -> usize { 1 }
@@ -66,6 +70,9 @@ fn default_lock_dir() -> PathBuf { PathBuf::from("/var/lock/borg-rust") }
 fn default_compression() -> String { "zstd".to_string() }
 fn default_compression_level() -> u32 { 3 }
 fn default_health_interval() -> u64 { 60 }
+fn default_heartbeat_path() -> Option<PathBuf> {
+    Some(PathBuf::from("/run/borgd/borgd.heartbeat"))
+}
 
 impl Default for GlobalConfig {
     fn default() -> Self {
@@ -79,6 +86,7 @@ impl Default for GlobalConfig {
             ionice_class: None,
             metrics_port: 0,
             health_check_interval: default_health_interval(),
+            heartbeat_path: default_heartbeat_path(),
         }
     }
 }
@@ -231,6 +239,18 @@ pub struct NotificationConfig {
     /// Webhook URL for notifications
     #[serde(default)]
     pub webhook_url: Option<String>,
+
+    /// Slack incoming webhook URL
+    #[serde(default)]
+    pub slack_webhook_url: Option<String>,
+
+    /// Alert after N consecutive failures
+    #[serde(default)]
+    pub failure_threshold: Option<u32>,
+
+    /// Alert when backup is overdue by this many minutes
+    #[serde(default)]
+    pub missed_threshold_minutes: Option<u64>,
 }
 
 /// Retry configuration

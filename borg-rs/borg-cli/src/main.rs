@@ -65,8 +65,11 @@ enum Commands {
     /// Prune archives according to retention policy
     Prune(PruneArgs),
 
-    /// Verify repository consistency
+    /// Verify repository consistency (legacy, use 'verify' instead)
     Check(CheckArgs),
+
+    /// Comprehensive integrity verification
+    Verify(VerifyArgs),
 
     /// Mount an archive as a FUSE filesystem
     Mount(MountArgs),
@@ -76,6 +79,9 @@ enum Commands {
 
     /// Compare archives or archive with filesystem
     Diff(DiffArgs),
+
+    /// Search for files across archives
+    Search(commands::search::SearchArgs),
 
     /// Rename an archive
     Rename(RenameArgs),
@@ -408,6 +414,48 @@ struct CheckArgs {
 }
 
 #[derive(Args, Debug)]
+struct VerifyArgs {
+    /// Specific archive to verify (verifies all if not specified)
+    archive: Option<String>,
+
+    /// Only verify repository structure (not archives)
+    #[arg(long)]
+    repository_only: bool,
+
+    /// Only verify archives (not repository chunks)
+    #[arg(long)]
+    archives_only: bool,
+
+    /// Run restore test on sample files
+    #[arg(long)]
+    test_restore: bool,
+
+    /// Number of sample files for restore test (default: 10)
+    #[arg(long)]
+    sample_files: Option<usize>,
+
+    /// Attempt to repair issues found
+    #[arg(long)]
+    repair: bool,
+
+    /// JSON output format
+    #[arg(long)]
+    json: bool,
+
+    /// Only verify first N archives
+    #[arg(long)]
+    first: Option<usize>,
+
+    /// Only verify last N archives
+    #[arg(long)]
+    last: Option<usize>,
+
+    /// Only verify archives matching glob pattern
+    #[arg(long, short = 'a')]
+    glob_archives: Option<String>,
+}
+
+#[derive(Args, Debug)]
 struct MountArgs {
     /// Archive to mount (or repository for all archives)
     archive: Option<String>,
@@ -592,9 +640,11 @@ async fn main() -> Result<()> {
         Commands::Delete(args) => commands::delete::run(&cli, args).await,
         Commands::Prune(args) => commands::prune::run(&cli, args).await,
         Commands::Check(args) => commands::check::run(&cli, args).await,
+        Commands::Verify(args) => commands::verify::run(&cli, args).await,
         Commands::Mount(args) => commands::mount::run(&cli, args).await,
         Commands::Umount(args) => commands::umount::run(&cli, args).await,
         Commands::Diff(args) => commands::diff::run(&cli, args).await,
+        Commands::Search(args) => commands::search::run(&cli, args).await,
         Commands::Rename(args) => commands::rename::run(&cli, args).await,
         Commands::Compact(args) => commands::compact::run(&cli, args).await,
         Commands::Key(args) => commands::key::run(&cli, args).await,

@@ -7,6 +7,8 @@ mod scheduler;
 mod ipc;
 mod job;
 mod health;
+mod notifications;
+mod state;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,6 +22,7 @@ use config::DaemonConfig;
 use scheduler::Scheduler;
 use ipc::ControlServer;
 use health::HealthMonitor;
+use state::JobState;
 
 // Wait, I need to see where borg_core is used.
 
@@ -69,6 +72,11 @@ enum Commands {
     },
     /// List configured backup jobs
     ListJobs,
+    /// Test notification configuration
+    NotifyTest {
+        /// Job name to use for notification settings
+        name: String,
+    },
     /// Validate configuration file
     Validate,
 }
@@ -78,15 +86,21 @@ pub struct DaemonState {
     config: RwLock<DaemonConfig>,
     scheduler: RwLock<Scheduler>,
     running_jobs: RwLock<Vec<String>>,
+    job_state: RwLock<std::collections::HashMap<String, JobState>>,
     shutdown_tx: broadcast::Sender<()>,
 }
 
 impl DaemonState {
     fn new(config: DaemonConfig, shutdown_tx: broadcast::Sender<()>) -> Self {
+        let mut job_state = std::collections::HashMap::new();
+        for job in &config.jobs {
+            job_state.insert(job.name.clone(), JobState::default());
+        }
         Self {
             config: RwLock::new(config.clone()),
             scheduler: RwLock::new(Scheduler::new(config.jobs.clone())),
             running_jobs: RwLock::new(Vec::new()),
+            job_state: RwLock::new(job_state),
             shutdown_tx,
         }
     }
@@ -112,6 +126,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::ListJobs) => {
             return send_control_command(&cli.socket, "list-jobs").await;
+        }
+        Some(Commands::NotifyTest { name }) => {
+            return send_control_command(&cli.socket, &format!("notify-test:{}", name)).await;
         }
         Some(Commands::RunJob { name }) => {
             return send_control_command(&cli.socket, &format!("run-job:{}", name)).await;
@@ -336,17 +353,124 @@ async fn execute_job(state: &Arc<DaemonState>, job_name: &str) -> Result<()> {
         running.retain(|j| j != job_name);
     }
 
+    let now = chrono::Utc::now();
     match &result {
         Ok(stats) => {
             info!("Job '{}' completed successfully: {} files, {} bytes", 
                 job_name, stats.files_processed, stats.bytes_processed);
+            update_job_state_success(state, job_name, now).await;
+            send_success_notification(state, job_name, Some(stats.archive_name.clone())).await;
+            mark_job_completed(state, job_name).await;
         }
         Err(e) => {
             error!("Job '{}' failed: {}", job_name, e);
+            update_job_state_failure(state, job_name, now, e.to_string()).await;
+            send_failure_notification(state, job_name, e.to_string()).await;
+            send_failure_threshold_notification(state, job_name).await;
+            mark_job_completed(state, job_name).await;
         }
     }
 
     result.map(|_| ())
+}
+
+async fn update_job_state_success(state: &Arc<DaemonState>, job_name: &str, now: chrono::DateTime<chrono::Utc>) {
+    let mut job_state = state.job_state.write().await;
+    if let Some(state) = job_state.get_mut(job_name) {
+        state.record_success(now);
+    }
+}
+
+async fn update_job_state_failure(
+    state: &Arc<DaemonState>,
+    job_name: &str,
+    now: chrono::DateTime<chrono::Utc>,
+    error: String,
+) {
+    let mut job_state = state.job_state.write().await;
+    if let Some(state) = job_state.get_mut(job_name) {
+        state.record_failure(now, error);
+    }
+}
+
+async fn mark_job_completed(state: &Arc<DaemonState>, job_name: &str) {
+    let mut scheduler = state.scheduler.write().await;
+    scheduler.job_completed(job_name);
+}
+
+async fn send_success_notification(state: &Arc<DaemonState>, job_name: &str, archive: Option<String>) {
+    let config = state.config.read().await;
+    if let Some(job) = config.jobs.iter().find(|job| job.name == job_name) {
+        if !job.notifications.on_success {
+            return;
+        }
+        if let Some(dispatcher) = notifications::build_dispatcher(&job.notifications) {
+            if let Ok(payload) = notifications::NotificationPayload::new(
+                notifications::NotificationEvent::JobSuccess {
+                    job: job_name.to_string(),
+                    archive,
+                },
+            ) {
+                dispatcher.send(payload, &job.retry).await;
+            }
+        }
+    }
+}
+
+async fn send_failure_notification(state: &Arc<DaemonState>, job_name: &str, error: String) {
+    let config = state.config.read().await;
+    if let Some(job) = config.jobs.iter().find(|job| job.name == job_name) {
+        if !job.notifications.on_failure {
+            return;
+        }
+        if let Some(dispatcher) = notifications::build_dispatcher(&job.notifications) {
+            if let Ok(payload) = notifications::NotificationPayload::new(
+                notifications::NotificationEvent::JobFailure {
+                    job: job_name.to_string(),
+                    error,
+                },
+            ) {
+                dispatcher.send(payload, &job.retry).await;
+            }
+        }
+    }
+}
+
+async fn send_failure_threshold_notification(state: &Arc<DaemonState>, job_name: &str) {
+    let config = state.config.read().await;
+    if let Some(job) = config.jobs.iter().find(|job| job.name == job_name) {
+        let threshold = match job.notifications.failure_threshold {
+            Some(value) if value > 0 => value,
+            _ => return,
+        };
+
+        let mut job_state = state.job_state.write().await;
+        if let Some(state) = job_state.get_mut(job_name) {
+            if state.consecutive_failures < threshold {
+                return;
+            }
+
+            let now = chrono::Utc::now();
+            if state
+                .last_failure_alert
+                .is_some_and(|last| now - last < chrono::Duration::minutes(5))
+            {
+                return;
+            }
+            state.record_failure_alert(now);
+        }
+
+        if let Some(dispatcher) = notifications::build_dispatcher(&job.notifications) {
+            if let Ok(payload) = notifications::NotificationPayload::new(
+                notifications::NotificationEvent::JobFailure {
+                    job: job_name.to_string(),
+                    error: format!("Failure threshold exceeded ({threshold})"),
+                },
+            ) {
+                dispatcher.send(payload, &job.retry).await;
+            }
+        }
+    }
 }
 
 /// Validate configuration file

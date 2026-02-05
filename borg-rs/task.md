@@ -3,33 +3,33 @@
 ## Phase 1: Safety & Integrity
 
 ### 1. Automated Integrity Verification & Restore Testing
-- [/] Core verification module
-  - [/] Add chunk checksum verification to `repository.rs`
-  - [ ] Implement `verify` subcommand in CLI
-  - [ ] Add repository-wide integrity check function
-  - [ ] Create verification report structure
-- [ ] Testing infrastructure
-  - [ ] Implement automated restore test command
-  - [ ] Add sample file extraction and validation
-  - [ ] Create verification statistics tracking
-- [ ] Documentation
-  - [ ] Write user guide for verification commands
-  - [ ] Document verification workflow
+- [X] Core verification module
+  - [X] Add chunk checksum verification to `repository.rs`
+  - [X] Implement `verify` subcommand in CLI
+  - [X] Add repository-wide integrity check function
+  - [X] Create verification report structure
+- [X] Testing infrastructure
+  - [X] Implement automated restore test command
+  - [X] Add sample file extraction and validation
+  - [X] Create verification statistics tracking
+- [X] Documentation
+  - [X] Write user guide for verification commands
+  - [X] Document verification workflow
   - [ ] Add examples to README
 
 ### 2. Metadata, Catalog & Searchable Snapshots
-- [ ] Snapshot metadata enhancement
-  - [ ] Create comprehensive snapshot database schema
-  - [ ] Add snapshot metadata to `archive.rs`
-  - [ ] Implement change tracking between snapshots
-- [ ] Search and query features
-  - [ ] Implement `snapshots` list command with filtering
-  - [ ] Add `search` command for file lookup across snapshots
-  - [ ] Create `diff` command implementation (currently stubbed)
-- [ ] Metadata storage
-  - [ ] Add SQLite-based catalog (or use existing sled)
-  - [ ] Index all backup metadata efficiently
-  - [ ] Track file modifications, sizes, dates
+- [X] Snapshot metadata enhancement
+  - [X] Create comprehensive snapshot database schema
+  - [X] Add snapshot metadata to `archive.rs`
+  - [X] Implement change tracking between snapshots
+- [X] Search and query features
+  - [X] Implement `snapshots` list command with filtering
+  - [X] Add `search` command for file lookup across snapshots
+  - [X] Create `diff` command implementation (currently stubbed)
+- [X] Metadata storage
+  - [X] Add sled-based catalog for efficient queries
+  - [X] Index all backup metadata efficiently
+  - [X] Track file modifications, sizes, dates
 - [ ] Documentation
   - [ ] User guide for search features
   - [ ] Examples of common queries

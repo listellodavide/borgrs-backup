@@ -15,6 +15,8 @@ borg-core = { path = "../borg-core" }
 
 # Async runtime
 tokio = { workspace = true, features = ["full", "signal"] }
+async-trait.workspace = true
+
 
 # Daemon and systemd integration
 daemonize = "0.5"
@@ -23,7 +25,9 @@ sd-notify = "0.4"
 # Configuration
 serde = { workspace = true, features = ["derive"] }
 serde_yaml = "0.9"
+serde_json.workspace = true
 toml = { workspace = true }
+
 
 # Scheduling
 cron = "0.12"
@@ -49,6 +53,7 @@ nix = { workspace = true, features = ["signal", "process", "user"] }
 
 # Metrics and health
 prometheus = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

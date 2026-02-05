@@ -9,9 +9,12 @@ pub mod compression;
 pub mod crypto;
 pub mod repository;
 pub mod cache;
+pub mod catalog;
 pub mod archive;
 pub mod exclusion;
 pub mod remote;
+pub mod storage;
+pub mod webdav;
 pub mod error;
 pub mod verification;
 
@@ -25,6 +28,30 @@ pub mod prelude {
     pub use crate::repository::{Repository, RepositoryConfig};
     pub use crate::archive::{Archive, ArchiveItem};
     pub use crate::exclusion::ExclusionList;
-    pub use crate::verification::{VerifyReport, ArchiveVerifyReport};
+    pub use crate::verification::{
+        VerifyReport, 
+        ArchiveVerifyReport, 
+        RepositoryIntegrityReport,
+        VerificationStatistics,
+        ProgressReporter,
+        ConsoleProgress,
+        RestoreTestReport,
+        RestoreTestConfig,
+        FileRestoreResult,
+        VerificationHistory,
+        VerificationHistoryEntry,
+        VerificationType,
+    };
+    pub use crate::catalog::{
+        Catalog,
+        CatalogArchive,
+        CatalogFile,
+        CatalogStats,
+        SearchQuery,
+        SearchResult,
+        ArchiveDiff,
+        DiffEntry,
+        ChangeType,
+    };
     pub use crate::error::{BorgError, Result};
 }

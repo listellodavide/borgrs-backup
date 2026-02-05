@@ -6,13 +6,15 @@ use tracing::info;
 
 use borg_core::{
     repository::{Repository, RepositoryConfig},
+    storage::{parse_storage_config, build_operator, StorageConfig},
 };
 
 use super::get_passphrase;
 use crate::{Cli, InitArgs};
 
 pub async fn run(cli: &Cli, args: &InitArgs) -> Result<()> {
-    let repo_path = super::get_repo_path(cli)?;
+    let repo_str = super::get_repo_path(cli)?;
+    let storage_config = parse_storage_config(&repo_str)?;
 
     // Parse encryption mode (simplified for now)
     let encrypted = match args.encryption.as_str() {
@@ -38,27 +40,30 @@ pub async fn run(cli: &Cli, args: &InitArgs) -> Result<()> {
         None
     };
 
-    // Create parent directories if requested
+    // Create parent directories if requested (only for local storage)
     if args.make_parent_dirs {
-        if let Some(parent) = PathBuf::from(&repo_path).parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create parent directories")?;
+        if let StorageConfig::Local { path } = &storage_config {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .context("Failed to create parent directories")?;
+            }
         }
     }
 
     // Initialize repository
-    info!("Initializing repository at {}", repo_path);
+    info!("Initializing repository at {}", repo_str);
 
     let mut config = RepositoryConfig::default();
     config.encrypted = encrypted;
 
+    let op = build_operator(storage_config)?;
     let _repo = Repository::init(
-        std::path::Path::new(&repo_path),
+        op,
         passphrase.as_deref(),
         Some(config)
-    ).context("Failed to initialize repository")?;
+    ).await.context("Failed to initialize repository")?;
 
-    println!("Initialized repository at {}", repo_path);
+    println!("Initialized repository at {}", repo_str);
 
     if encrypted {
         println!();

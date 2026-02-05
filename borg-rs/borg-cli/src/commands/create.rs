@@ -36,7 +36,7 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
     let _compressor = build_compressor(&args)?;
 
     // Open repository
-    let _repo = open_repository(&repo_path).await
+    let mut repo = open_repository(&repo_path).await
         .context("Failed to open repository")?;
 
     // Create progress bar if requested
@@ -54,7 +54,6 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
     };
 
     // Build archive creator
-    let mut repo = open_repository(&repo_path).await?;
     let mut creator = ArchiveCreator::new(&mut repo)
         .with_exclusions(exclusion_matcher);
 
@@ -73,7 +72,7 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
         return Ok(());
     }
 
-    let archive = creator.create(&args.archive, &args.paths, args.comment.clone())
+    let archive = creator.create(&args.archive, &args.paths, args.comment.clone()).await
         .map_err(|e| anyhow::anyhow!("Failed to create archive: {}", e))?;
 
     // Finish progress bar

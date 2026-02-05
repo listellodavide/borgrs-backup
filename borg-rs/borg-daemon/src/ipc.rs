@@ -120,6 +120,10 @@ async fn handle_command(command: &str, state: &Arc<DaemonState>) -> String {
             let job_name = &cmd[11..];
             handle_resume_job(job_name, state).await
         }
+        cmd if cmd.starts_with("notify-test:") => {
+            let job_name = &cmd[12..];
+            handle_notify_test(job_name, state).await
+        }
         "metrics" => handle_metrics(state).await,
         "health" => handle_health(state).await,
         _ => format!("Unknown command: {}\n", command),
@@ -130,6 +134,7 @@ async fn handle_status(state: &Arc<DaemonState>) -> String {
     let running_jobs = state.running_jobs.read().await;
     let scheduler = state.scheduler.read().await;
     let scheduled = scheduler.list_scheduled();
+    let job_state = state.job_state.read().await;
 
     let mut response = String::new();
     response.push_str("Borg-Rust Daemon Status\n");
@@ -150,7 +155,20 @@ async fn handle_status(state: &Arc<DaemonState>) -> String {
     } else {
         for (name, next_run, enabled) in scheduled {
             let status = if enabled { "" } else { " [disabled]" };
+            let state = job_state.get(&name);
+            let last_success = state
+                .and_then(|s| s.last_success)
+                .map(|t| t.to_rfc3339())
+                .unwrap_or_else(|| "never".to_string());
+            let last_failure = state
+                .and_then(|s| s.last_failure)
+                .map(|t| t.to_rfc3339())
+                .unwrap_or_else(|| "none".to_string());
+            let failures = state.map(|s| s.consecutive_failures).unwrap_or(0);
             response.push_str(&format!("  - {}: {}{}\n", name, next_run, status));
+            response.push_str(&format!("      last_success: {}\n", last_success));
+            response.push_str(&format!("      last_failure: {}\n", last_failure));
+            response.push_str(&format!("      consecutive_failures: {}\n", failures));
         }
     }
 
@@ -248,15 +266,66 @@ async fn handle_metrics(state: &Arc<DaemonState>) -> String {
 async fn handle_health(state: &Arc<DaemonState>) -> String {
     // Basic health check
     let running = state.running_jobs.read().await;
+    let job_state = state.job_state.read().await;
+    let scheduler = state.scheduler.read().await;
     
     let mut response = String::new();
     response.push_str("{\n");
     response.push_str("  \"status\": \"healthy\",\n");
     response.push_str(&format!("  \"running_jobs\": {},\n", running.len()));
+    response.push_str(&format!("  \"scheduled_jobs\": {},\n", scheduler.list_scheduled().len()));
+    response.push_str("  \"jobs\": [\n");
+    for (index, (name, next_run, _)) in scheduler.list_scheduled().iter().enumerate() {
+        let state = job_state.get(name);
+        let last_success = state
+            .and_then(|s| s.last_success)
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_else(|| "null".to_string());
+        let last_failure = state
+            .and_then(|s| s.last_failure)
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_else(|| "null".to_string());
+        let failures = state.map(|s| s.consecutive_failures).unwrap_or(0);
+        let separator = if index + 1 == scheduler.list_scheduled().len() { "" } else { "," };
+        response.push_str(&format!(
+            "    {{ \"name\": \"{}\", \"next_run\": \"{}\", \"last_success\": \"{}\", \"last_failure\": \"{}\", \"consecutive_failures\": {} }}{}\n",
+            name,
+            next_run.to_rfc3339(),
+            last_success,
+            last_failure,
+            failures,
+            separator
+        ));
+    }
+    response.push_str("  ],\n");
     response.push_str(&format!("  \"timestamp\": \"{}\"\n", chrono::Utc::now()));
     response.push_str("}\n");
 
     response
+}
+
+async fn handle_notify_test(job_name: &str, state: &Arc<DaemonState>) -> String {
+    let config = state.config.read().await;
+    let Some(job) = config.jobs.iter().find(|job| job.name == job_name) else {
+        return format!("Error: Job '{}' not found\n", job_name);
+    };
+
+    let Some(dispatcher) = crate::notifications::build_dispatcher(&job.notifications) else {
+        return format!("No notifiers configured for job '{}'\n", job_name);
+    };
+
+    let payload = match crate::notifications::NotificationPayload::new(
+        crate::notifications::NotificationEvent::JobSuccess {
+            job: job_name.to_string(),
+            archive: Some("test-archive".to_string()),
+        },
+    ) {
+        Ok(payload) => payload,
+        Err(err) => return format!("Failed to build notification payload: {}\n", err),
+    };
+
+    dispatcher.send(payload, &job.retry).await;
+    format!("Notification test triggered for job '{}'\n", job_name)
 }
 
 #[cfg(test)]
@@ -293,5 +362,12 @@ mod tests {
         let state = create_test_state().await;
         let response = handle_command("unknown", &state).await;
         assert!(response.contains("Unknown command"));
+    }
+
+    #[tokio::test]
+    async fn test_notify_test_without_job() {
+        let state = create_test_state().await;
+        let response = handle_command("notify-test:missing", &state).await;
+        assert!(response.contains("not found"));
     }
 }
