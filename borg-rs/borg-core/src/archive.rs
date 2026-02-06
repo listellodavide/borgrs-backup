@@ -128,10 +128,8 @@ pub struct ArchiveItem {
     /// Chunk IDs for file content (empty for directories)
     pub chunks: Vec<ChunkId>,
     /// Symlink target (for symlinks only)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub symlink_target: Option<PathBuf>,
     /// Hard link target path (for hardlinks only)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub hardlink_target: Option<PathBuf>,
 }
 
@@ -190,7 +188,6 @@ pub struct ArchiveMetadata {
     /// Command line used to create the backup
     pub cmdline: Vec<String>,
     /// Comment (optional)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
 }
 
@@ -338,7 +335,7 @@ impl<'a> ArchiveCreator<'a> {
             .map_err(|e| BorgError::Serialization(e.to_string()))?;
         let archive_chunk = Chunk::new(archive_data);
         let archive_id = archive_chunk.id.clone();
-        self.repo.put_chunk(&archive_chunk).await?;
+        let _ = self.repo.put_chunk(&archive_chunk).await?;
 
         // Update manifest
         let mut manifest = self.repo.load_manifest().await?;
@@ -477,10 +474,12 @@ impl<'a> ArchiveCreator<'a> {
                 let mut chunk_ids = Vec::with_capacity(chunks.len());
 
                 for chunk in chunks {
-                    let is_new = self.repo.put_chunk(&chunk).await?;
+                    let (is_new, stored_size) = self.repo.put_chunk(&chunk).await?;
+                    let original_chunk_size = chunk.data.len() as u64;
                     if is_new {
                         stats.nchunks_unique += 1;
-                        stats.deduplicated_size += chunk.original_size as u64;
+                        stats.deduplicated_size += original_chunk_size;
+                        stats.compressed_size += stored_size;
                     }
                     stats.nchunks += 1;
                     chunk_ids.push(chunk.id);
@@ -699,5 +698,51 @@ mod tests {
 
         assert_eq!(archive.stats.nfiles, 3);
         assert_eq!(archive.stats.ndirs, 2); // source + subdir
+    }
+
+    #[test]
+    fn test_archive_bincode_roundtrip() {
+        let item = ArchiveItem {
+            path: PathBuf::from("test/file"),
+            item_type: ItemType::File,
+            size: 123,
+            attrs: UnixAttributes {
+                mode: 0o644,
+                uid: 1000,
+                gid: 1000,
+                atime: 100,
+                mtime: 100,
+                ctime: 100,
+            },
+            chunks: vec![ChunkId::new([1u8; 32])],
+            symlink_target: None,
+            hardlink_target: None,
+        };
+
+        let metadata = ArchiveMetadata {
+            name: "test-archive".to_string(),
+            time: chrono::Utc::now(),
+            hostname: "localhost".to_string(),
+            username: "user".to_string(),
+            cmdline: vec!["borg".to_string(), "create".to_string()],
+            comment: Some("test comment".to_string()),
+        };
+
+        let archive = Archive {
+            metadata,
+            items: vec![item],
+            stats: ArchiveStats::default(),
+        };
+
+        // Serialize
+        let encoded = bincode::serialize(&archive).unwrap();
+
+        // Deserialize
+        let decoded: Archive = bincode::deserialize(&encoded).unwrap();
+
+        assert_eq!(decoded.metadata.name, "test-archive");
+        assert_eq!(decoded.items.len(), 1);
+        assert_eq!(decoded.items[0].path, PathBuf::from("test/file"));
+        assert_eq!(decoded.items[0].symlink_target, None);
     }
 }

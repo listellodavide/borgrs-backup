@@ -146,6 +146,14 @@ struct CreateArgs {
     #[arg(required = true)]
     paths: Vec<PathBuf>,
 
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
+
     /// Exclude paths matching pattern
     #[arg(short, long, action = clap::ArgAction::Append)]
     exclude: Vec<String>,
@@ -228,6 +236,14 @@ struct ExtractArgs {
     /// Paths to extract (all if not specified)
     paths: Vec<PathBuf>,
 
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
+
     /// Destination directory
     #[arg(long, default_value = ".")]
     destination: PathBuf,
@@ -284,6 +300,14 @@ struct ListArgs {
 
     /// Paths to list (all if not specified)
     paths: Vec<PathBuf>,
+
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 
     /// Short format (paths only)
     #[arg(long)]

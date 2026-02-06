@@ -331,11 +331,11 @@ impl Repository {
 
     /// Store a chunk in the repository
     #[instrument(skip(self, chunk), fields(chunk_id = %chunk.id))]
-    pub async fn put_chunk(&mut self, chunk: &Chunk) -> Result<bool> {
+    pub async fn put_chunk(&mut self, chunk: &Chunk) -> Result<(bool, u64)> {
         // Check for deduplication
         if self.has_chunk(&chunk.id) {
             debug!("Chunk already exists, deduplicating");
-            return Ok(false);
+            return Ok((false, 0));
         }
 
         // Compress
@@ -365,7 +365,7 @@ impl Repository {
             data_to_store.len()
         );
 
-        Ok(true)
+        Ok((true, data_to_store.len() as u64))
     }
 
     /// Retrieve a chunk from the repository
@@ -551,7 +551,7 @@ mod tests {
         let chunk_id = chunk.id.clone();
 
         // Store
-        let is_new = repo.put_chunk(&chunk).await.unwrap();
+        let (is_new, _) = repo.put_chunk(&chunk).await.unwrap();
         assert!(is_new);
 
         // Retrieve
@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(chunk.data, retrieved.data);
 
         // Deduplication
-        let is_new = repo.put_chunk(&chunk).await.unwrap();
+        let (is_new, _) = repo.put_chunk(&chunk).await.unwrap();
         assert!(!is_new);
     }
 }

@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use borg_core::archive::{Archive, ArchiveExtractor, ArchiveItem, ItemType};
-use borg_core::catalog::{ArchiveDiff, Catalog, ChangeType, DiffEntry};
+use borg_core::catalog::{ArchiveDiff, ChangeType, DiffEntry};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 

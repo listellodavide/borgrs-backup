@@ -17,7 +17,20 @@ use super::{format_duration, format_size, get_repo_path, open_repository};
 use crate::{Cli, CreateArgs};
 
 pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
-    let repo_path = get_repo_path(cli)?;
+    let repo_path_raw = get_repo_path(cli)?;
+
+    // Normalize WebDAV URL if credentials are provided
+    let repo_path = if args.webdav_user.is_some() || args.webdav_pass.is_some() {
+        crate::commands::init::normalize_webdav_url(
+            &repo_path_raw,
+            "webdav",
+            args.webdav_user.as_deref(),
+            args.webdav_pass.as_deref(),
+        )?
+    } else {
+        repo_path_raw
+    };
+
     let start_time = Instant::now();
 
     info!("Creating archive '{}' in repository {}", args.archive, repo_path);
@@ -41,14 +54,17 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
 
     // Create progress bar if requested
     let progress = if cli.progress {
+        println!("Scanning files to calculate total...");
+        let total_files = count_files_recursive(&args.paths);
         let pb = ProgressBar::new_spinner();
         pb.set_style(
             ProgressStyle::default_spinner()
-                .template("{spinner:.green} [{elapsed_precise}] {msg}")
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
                 .unwrap()
         );
-        pb.set_message("Scanning files...");
-        Some(pb)
+        pb.set_length(total_files);
+        pb.set_message("Starting backup...");
+        Some((pb, total_files))
     } else {
         None
     };
@@ -58,10 +74,11 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
         .with_exclusions(exclusion_matcher);
 
     // Set progress handler if enabled
-    if let Some(ref pb) = progress {
+    if let Some((pb, total)) = &progress {
         let cli_progress = CliProgress {
             pb: pb.clone(),
             list_files: args.list,
+            total_files: *total,
         };
         creator = creator.with_progress(Box::new(cli_progress));
     }
@@ -76,8 +93,9 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to create archive: {}", e))?;
 
     // Finish progress bar
-    if let Some(pb) = progress {
+    if let Some((pb, _)) = progress {
         pb.finish_with_message("Done");
+        println!("[ 100%] transfer completed");
     }
 
     let duration = start_time.elapsed();
@@ -139,14 +157,24 @@ fn build_exclusion_matcher(args: &CreateArgs) -> Result<ExclusionList> {
 struct CliProgress {
     pb: ProgressBar,
     list_files: bool,
+    total_files: u64,
 }
 
 impl BackupProgress for CliProgress {
     fn on_file_start(&self, path: &Path) {
-        if self.list_files {
-            println!("{}", path.display());
+        let pos = self.pb.position();
+        let percent = if self.total_files > 0 {
+            (pos * 100) / self.total_files
+        } else {
+            0
+        };
+        
+        // Print the log line above the progress bar
+        self.pb.println(format!("[{:3}%] {}", percent, path.display()));
+        
+        if !self.list_files {
+            self.pb.set_message(format!("Processing: {}", path.display()));
         }
-        self.pb.set_message(format!("Processing: {}", path.display()));
     }
 
     fn on_file_complete(&self, _path: &Path, _size: u64, _chunks: usize) {
@@ -176,4 +204,21 @@ fn build_compressor(args: &CreateArgs) -> Result<Compressor> {
     };
 
     Ok(Compressor::new(config))
+}
+
+fn count_files_recursive(paths: &[std::path::PathBuf]) -> u64 {
+    let mut count = 0;
+    for path in paths {
+        if path.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    count += count_files_recursive(&[path]);
+                }
+            }
+        } else if path.is_file() {
+            count += 1;
+        }
+    }
+    count
 }

@@ -180,6 +180,7 @@ async fn main() -> Result<()> {
     });
 
     // Notify systemd that we're ready
+    #[cfg(unix)]
     if !cli.foreground {
         let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
     }
@@ -201,7 +202,10 @@ async fn main() -> Result<()> {
     }
 
     // Notify systemd we're stopping
-    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
+    #[cfg(unix)]
+    {
+        let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
+    }
 
     // Graceful shutdown
     let _ = shutdown_tx.send(());

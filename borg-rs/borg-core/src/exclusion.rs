@@ -8,7 +8,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{debug, instrument, warn};
+use tracing::{debug, instrument};
 
 /// Pattern type for exclusions
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,7 +33,6 @@ pub struct ExclusionPattern {
     /// Whether this is a directory-only pattern
     pub directory_only: bool,
     /// Comment/description for this pattern
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
 }
 

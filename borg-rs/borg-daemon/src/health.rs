@@ -55,7 +55,10 @@ impl HealthMonitor {
         }
 
         // Notify systemd watchdog if configured
-        let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Watchdog]);
+        #[cfg(unix)]
+        {
+            let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Watchdog]);
+        }
 
         // Check repository connectivity for scheduled jobs
         // (In a real implementation, we'd check repositories periodically)

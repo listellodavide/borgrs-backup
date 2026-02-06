@@ -1,6 +1,5 @@
 //! Repository initialization command
 
-use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tracing::info;
 
@@ -110,7 +109,7 @@ fn parse_size(s: &str) -> Result<u64> {
     Ok(num * multiplier)
 }
 
-fn normalize_webdav_url(
+pub fn normalize_webdav_url(
     value: &str,
     scheme: &str,
     username: Option<&str>,
@@ -156,5 +155,14 @@ mod tests {
         assert_eq!(parse_size("1KB").unwrap(), 1024);
         assert_eq!(parse_size("100M").unwrap(), 100 * 1024 * 1024);
         assert_eq!(parse_size("10G").unwrap(), 10 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_normalize_webdav_url_credentials() {
+        let url = normalize_webdav_url("http://example.com/repo", "webdav", Some("user"), Some("pass")).unwrap();
+        assert_eq!(url, "http://user:pass@example.com/repo");
+
+        let url = normalize_webdav_url("http://old:old@example.com/repo", "webdav", Some("new"), Some("newpass")).unwrap();
+        assert_eq!(url, "http://new:newpass@example.com/repo");
     }
 }

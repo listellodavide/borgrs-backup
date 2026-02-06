@@ -1,6 +1,6 @@
 //! Unmount FUSE filesystem
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use crate::{Cli, UmountArgs};
 
 pub async fn run(_cli: &Cli, args: &UmountArgs) -> Result<()> {
@@ -10,6 +10,7 @@ pub async fn run(_cli: &Cli, args: &UmountArgs) -> Result<()> {
     #[cfg(unix)]
     {
         use std::process::Command;
+        use anyhow::Context;
         let status = Command::new("fusermount")
             .arg("-u")
             .arg(&args.mountpoint)

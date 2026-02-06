@@ -20,6 +20,8 @@ async-trait.workspace = true
 
 # Daemon and systemd integration
 daemonize = "0.5"
+
+[target.'cfg(unix)'.dependencies]
 sd-notify = "0.4"
 
 # Configuration
