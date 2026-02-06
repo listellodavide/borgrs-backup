@@ -17,7 +17,13 @@ pub async fn run(cli: &Cli, args: &InitArgs) -> Result<()> {
     } else if let Some(url) = &args.webdavs_url {
         normalize_webdav_url(url, "webdavs", args.webdav_user.as_deref(), args.webdav_pass.as_deref())?
     } else {
-        super::get_repo_path(cli)?
+        let raw_repo = super::get_repo_path(cli)?;
+        // If it was from remote_repo, we should normalize it if credentials are provided
+        if cli.remote_repo.is_some() && (args.webdav_user.is_some() || args.webdav_pass.is_some()) {
+            normalize_webdav_url(&raw_repo, "webdav", args.webdav_user.as_deref(), args.webdav_pass.as_deref())?
+        } else {
+            raw_repo
+        }
     };
     let storage_config = parse_storage_config(&repo_str)?;
 
@@ -64,6 +70,7 @@ pub async fn run(cli: &Cli, args: &InitArgs) -> Result<()> {
     let op = build_operator(storage_config)?;
     let _repo = Repository::init(
         op,
+        repo_str.clone(),
         passphrase.as_deref(),
         Some(config)
     ).await.context("Failed to initialize repository")?;

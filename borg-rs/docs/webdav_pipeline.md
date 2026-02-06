@@ -80,3 +80,12 @@ can later be used for archive metadata or resuming uploads.
 - Only size + mtime are used to detect unchanged files (etag retained for later).
 - Range integrity is checked via `Content-Range` when resuming.
 - All streaming operations use bounded buffers to prevent unbounded memory growth.
+
+
+## 6. Example usage
+
+# Initialize a new repo on a WebDAV server
+borg init webdavs://alice:secret@backup.example.com/borg-repo
+
+# List archives later
+borg --repo webdavs://alice:secret@backup.example.com/borg-repo list

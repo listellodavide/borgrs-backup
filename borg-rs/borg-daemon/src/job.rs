@@ -170,7 +170,7 @@ async fn open_repository(repo_str: &str) -> Result<Repository> {
     let op = build_operator(config)?;
     
     // For now, assume no passphrase or handle it if available in config
-    Repository::open(op, None).await.context("Failed to open repository")
+    Repository::open(op, repo_str.to_string(), None).await.context("Failed to open repository")
 }
 
 /// Create a backup archive

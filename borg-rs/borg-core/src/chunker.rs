@@ -84,20 +84,20 @@ impl Chunk {
 /// Configuration for the chunker
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkerConfig {
-    /// Minimum chunk size in bytes (default: 64 KiB)
+    /// Minimum chunk size in bytes
     pub min_size: u32,
-    /// Average chunk size in bytes (default: 1 MiB)
+    /// Average chunk size in bytes
     pub avg_size: u32,
-    /// Maximum chunk size in bytes (default: 4 MiB)
+    /// Maximum chunk size in bytes
     pub max_size: u32,
 }
 
 impl Default for ChunkerConfig {
     fn default() -> Self {
         Self {
-            min_size: 64 * 1024,       // 64 KiB
-            avg_size: 1024 * 1024,     // 1 MiB
-            max_size: 4 * 1024 * 1024, // 4 MiB
+            min_size: 1024 * 1024,       // 1 MiB
+            avg_size: 4 * 1024 * 1024,     // 4 MiB
+            max_size: 16 * 1024 * 1024, // 16 MiB
         }
     }
 }
@@ -115,9 +115,18 @@ impl ChunkerConfig {
     /// Create a configuration optimized for large files
     pub fn large_files() -> Self {
         Self {
-            min_size: 256 * 1024,      // 256 KiB
-            avg_size: 4 * 1024 * 1024, // 4 MiB
+            min_size: 1024 * 1024,      // 1 MiB
+            avg_size: 4 * 1024 * 1024,  // 4 MiB
             max_size: 16 * 1024 * 1024, // 16 MiB
+        }
+    }
+
+    /// Create a configuration for general purpose use (the previous default)
+    pub fn general_purpose() -> Self {
+        Self {
+            min_size: 64 * 1024,       // 64 KiB
+            avg_size: 1024 * 1024,     // 1 MiB
+            max_size: 4 * 1024 * 1024, // 4 MiB
         }
     }
 

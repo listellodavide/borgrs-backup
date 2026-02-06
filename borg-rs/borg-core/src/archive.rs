@@ -370,17 +370,19 @@ impl<'a> ArchiveCreator<'a> {
         let entries: Vec<_> = WalkDir::new(path)
             .follow_links(false)
             .into_iter()
+            .filter_entry(|e| {
+                let relative_path = e.path().strip_prefix(root).unwrap_or(e.path());
+                let is_excluded = self.exclusions.is_excluded(relative_path, e.file_type().is_dir());
+                if is_excluded {
+                    self.progress.on_file_skipped(e.path(), "excluded");
+                    false
+                } else {
+                    true
+                }
+            })
             .filter_map(|e| {
                 match e {
-                    Ok(entry) => {
-                        let is_excluded = self.exclusions.is_excluded(entry.path(), entry.file_type().is_dir());
-                        if is_excluded {
-                            self.progress.on_file_skipped(entry.path(), "excluded");
-                            None
-                        } else {
-                            Some(Ok(entry))
-                        }
-                    }
+                    Ok(entry) => Some(Ok(entry)),
                     Err(e) => Some(Err(e)),
                 }
             })
@@ -402,7 +404,7 @@ impl<'a> ArchiveCreator<'a> {
                 .strip_prefix(root)
                 .unwrap_or(entry_path)
                 .to_path_buf();
-
+            
             let meta = match entry.metadata() {
                 Ok(m) => m,
                 Err(e) => {
@@ -531,7 +533,12 @@ impl<'a> ArchiveExtractor<'a> {
         let mut items = archive.items.clone();
         items.sort_by(|a, b| a.path.cmp(&b.path));
 
+        // First pass: Extract directories, files, and symlinks
         for item in &items {
+            if item.item_type == ItemType::Hardlink {
+                continue;
+            }
+
             let target_path = dest.join(&item.path);
             
             match item.item_type {
@@ -567,18 +574,26 @@ impl<'a> ArchiveExtractor<'a> {
                         stats.symlinks_extracted += 1;
                     }
                 }
-                ItemType::Hardlink => {
-                    if let Some(link_target) = &item.hardlink_target {
-                        let link_source = dest.join(link_target);
-                        if let Some(parent) = target_path.parent() {
-                            fs::create_dir_all(parent)?;
-                        }
+                _ => {}
+            }
+        }
+
+        // Second pass: Extract hardlinks
+        for item in &items {
+            if item.item_type == ItemType::Hardlink {
+                let target_path = dest.join(&item.path);
+                if let Some(link_target) = &item.hardlink_target {
+                    let link_source = dest.join(link_target);
+                    if let Some(parent) = target_path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    // Ensure the source exists before linking
+                    if link_source.exists() {
                         std::fs::hard_link(&link_source, &target_path)?;
                         stats.hardlinks_extracted += 1;
+                    } else {
+                        warn!("Hardlink source not found: {}", link_source.display());
                     }
-                }
-                _ => {
-                    debug!("Skipping special file during extraction: {}", item.path.display());
                 }
             }
         }
@@ -604,10 +619,84 @@ impl<'a> ArchiveExtractor<'a> {
             })?;
 
         let chunk = self.repo.get_chunk(&archive_ref.id).await?;
-        let archive: Archive = bincode::deserialize(&chunk.data)
-            .map_err(|e| BorgError::Deserialization(e.to_string()))?;
 
-        Ok(archive)
+        // Try deserializing as current version
+        if let Ok(archive) = bincode::deserialize::<Archive>(&chunk.data) {
+            return Ok(archive);
+        }
+
+        // Fallback definitions for older versions
+        #[derive(Deserialize)]
+        struct ArchiveMetadataV1 {
+            name: String,
+            time: chrono::DateTime<chrono::Utc>,
+            hostname: String,
+            username: String,
+            cmdline: Vec<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct ArchiveItemV1 {
+            path: PathBuf,
+            item_type: ItemType,
+            size: u64,
+            attrs: UnixAttributes,
+            chunks: Vec<ChunkId>,
+            symlink_target: Option<PathBuf>,
+        }
+
+        let convert_item = |item: ArchiveItemV1| -> ArchiveItem {
+            ArchiveItem {
+                path: item.path,
+                item_type: item.item_type,
+                size: item.size,
+                attrs: item.attrs,
+                chunks: item.chunks,
+                symlink_target: item.symlink_target,
+                hardlink_target: None,
+            }
+        };
+
+        // Try V1 (Old Metadata, Old Item)
+        #[derive(Deserialize)]
+        struct ArchiveV1 {
+            metadata: ArchiveMetadataV1,
+            items: Vec<ArchiveItemV1>,
+            stats: ArchiveStats,
+        }
+
+        if let Ok(v1) = bincode::deserialize::<ArchiveV1>(&chunk.data) {
+            return Ok(Archive {
+                metadata: ArchiveMetadata {
+                    name: v1.metadata.name,
+                    time: v1.metadata.time,
+                    hostname: v1.metadata.hostname,
+                    username: v1.metadata.username,
+                    cmdline: v1.metadata.cmdline,
+                    comment: None,
+                },
+                items: v1.items.into_iter().map(convert_item).collect(),
+                stats: v1.stats,
+            });
+        }
+
+        // Try Mixed (Current Metadata, Old Item)
+        #[derive(Deserialize)]
+        struct ArchiveMixed {
+            metadata: ArchiveMetadata,
+            items: Vec<ArchiveItemV1>,
+            stats: ArchiveStats,
+        }
+
+        if let Ok(mixed) = bincode::deserialize::<ArchiveMixed>(&chunk.data) {
+            return Ok(Archive {
+                metadata: mixed.metadata,
+                items: mixed.items.into_iter().map(convert_item).collect(),
+                stats: mixed.stats,
+            });
+        }
+
+        Err(BorgError::Deserialization("Failed to deserialize archive (unknown format)".to_string()))
     }
 
     /// Restore file attributes (permissions, ownership, times)
@@ -671,6 +760,8 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
     use crate::storage::{StorageConfig, build_operator};
+    use std::fs;
+    use std::path::PathBuf;
 
     #[tokio::test]
     async fn test_archive_creation() {
@@ -687,7 +778,7 @@ mod tests {
 
         // Initialize repository
         let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
-        let mut repo = Repository::init(op, Some("passphrase"), None).await.unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
 
         // Create archive
         let creator = ArchiveCreator::new(&mut repo);
@@ -744,5 +835,197 @@ mod tests {
         assert_eq!(decoded.items.len(), 1);
         assert_eq!(decoded.items[0].path, PathBuf::from("test/file"));
         assert_eq!(decoded.items[0].symlink_target, None);
+    }
+
+    #[tokio::test]
+    async fn test_empty_archive() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().join("repo");
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+
+        let creator = ArchiveCreator::new(&mut repo);
+        let archive = creator
+            .create("empty-archive", &[source_dir.clone()], None)
+            .await
+            .unwrap();
+
+        assert_eq!(archive.stats.nfiles, 0);
+        assert_eq!(archive.stats.ndirs, 1); // Just the root dir
+    }
+
+    #[tokio::test]
+    async fn test_archive_extraction() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().join("repo");
+        let source_dir = temp_dir.path().join("source");
+        let restore_dir = temp_dir.path().join("restore");
+
+        // Setup source
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("data.txt"), "Important Data").unwrap();
+        fs::create_dir_all(source_dir.join("folder")).unwrap();
+        fs::write(source_dir.join("folder/sub.txt"), "Sub Data").unwrap();
+
+        // Create archive
+        let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
+        let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+        let creator = ArchiveCreator::new(&mut repo);
+        creator.create("backup1", &[source_dir.clone()], None).await.unwrap();
+
+        // Extract archive
+        let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
+        let extractor = ArchiveExtractor::new(&repo);
+        let stats = extractor.extract("backup1", &restore_dir).await.unwrap();
+
+        assert_eq!(stats.files_extracted, 2);
+        assert_eq!(stats.dirs_extracted, 2);
+
+        // Verify content
+        let restored_data = fs::read_to_string(restore_dir.join("data.txt")).unwrap();
+        assert_eq!(restored_data, "Important Data");
+
+        let restored_sub = fs::read_to_string(restore_dir.join("folder/sub.txt")).unwrap();
+        assert_eq!(restored_sub, "Sub Data");
+    }
+
+    #[tokio::test]
+    async fn test_symlink_support() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let temp_dir = TempDir::new().unwrap();
+            let repo_path = temp_dir.path().join("repo");
+            let source_dir = temp_dir.path().join("source");
+            let restore_dir = temp_dir.path().join("restore");
+
+            fs::create_dir_all(&source_dir).unwrap();
+            fs::write(source_dir.join("target.txt"), "Target").unwrap();
+            symlink("target.txt", source_dir.join("link.txt")).unwrap();
+
+            let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
+            let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+
+            let creator = ArchiveCreator::new(&mut repo);
+            let archive = creator.create("symlink-test", &[source_dir.clone()], None).await.unwrap();
+
+            // Check archive stats
+            // 1 file, 1 dir (root), 1 symlink
+            assert_eq!(archive.stats.nfiles, 1);
+
+            // Extract
+            let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
+            let extractor = ArchiveExtractor::new(&repo);
+            let stats = extractor.extract("symlink-test", &restore_dir).await.unwrap();
+
+            assert_eq!(stats.symlinks_extracted, 1);
+
+            // Verify symlink
+            let link_path = restore_dir.join("link.txt");
+            assert!(fs::symlink_metadata(&link_path).unwrap().file_type().is_symlink());
+            let target = fs::read_link(&link_path).unwrap();
+            assert_eq!(target, PathBuf::from("target.txt"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_hardlink_support() {
+        #[cfg(unix)]
+        {
+            let temp_dir = TempDir::new().unwrap();
+            let repo_path = temp_dir.path().join("repo");
+            let source_dir = temp_dir.path().join("source");
+            let restore_dir = temp_dir.path().join("restore");
+
+            fs::create_dir_all(&source_dir).unwrap();
+            let file1 = source_dir.join("file1.txt");
+            let file2 = source_dir.join("file2.txt");
+
+            fs::write(&file1, "Shared Content").unwrap();
+            fs::hard_link(&file1, &file2).unwrap();
+
+            let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
+            let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+
+            let creator = ArchiveCreator::new(&mut repo);
+            let archive = creator.create("hardlink-test", &[source_dir.clone()], None).await.unwrap();
+
+            // Should have 2 files, but deduplicated chunks
+            assert_eq!(archive.stats.nfiles, 2);
+            // Only one file's worth of chunks should be unique
+            assert_eq!(archive.stats.nchunks_unique, archive.stats.nchunks);
+
+            // Extract
+            let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
+            let extractor = ArchiveExtractor::new(&repo);
+            let stats = extractor.extract("hardlink-test", &restore_dir).await.unwrap();
+
+            assert_eq!(stats.hardlinks_extracted, 1);
+
+            // Verify hardlink relationship
+            let r_file1 = restore_dir.join("file1.txt");
+            let r_file2 = restore_dir.join("file2.txt");
+
+            use std::os::unix::fs::MetadataExt;
+            let meta1 = fs::metadata(&r_file1).unwrap();
+            let meta2 = fs::metadata(&r_file2).unwrap();
+            assert_eq!(meta1.ino(), meta2.ino());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_exclusion_patterns() {
+        use crate::exclusion::ExclusionPattern;
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().join("repo");
+        let source_dir = temp_dir.path().join("source");
+
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("include.txt"), "Keep").unwrap();
+        fs::write(source_dir.join("exclude.tmp"), "Ignore").unwrap();
+        fs::create_dir_all(source_dir.join("node_modules")).unwrap();
+        fs::write(source_dir.join("node_modules/lib.js"), "Code").unwrap();
+
+        let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+
+        let mut exclusions = ExclusionList::new();
+        exclusions.add_pattern(ExclusionPattern::glob("*.tmp")).unwrap();
+        exclusions.add_pattern(ExclusionPattern::glob("**/node_modules")).unwrap();
+
+        let creator = ArchiveCreator::new(&mut repo).with_exclusions(exclusions);
+        let archive = creator.create("exclude-test", &[source_dir.clone()], None).await.unwrap();
+
+        // Should only contain include.txt and the root dir
+        assert_eq!(archive.stats.nfiles, 1);
+
+        // Verify items
+        let has_tmp = archive.items.iter().any(|i| i.path.to_string_lossy().contains("exclude.tmp"));
+        let has_node = archive.items.iter().any(|i| i.path.to_string_lossy().contains("node_modules"));
+        assert!(!has_tmp);
+        assert!(!has_node);
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_archive_name() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().join("repo");
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+
+        let creator = ArchiveCreator::new(&mut repo);
+        creator.create("dup-test", &[source_dir.clone()], None).await.unwrap();
+
+        let creator = ArchiveCreator::new(&mut repo);
+        let result = creator.create("dup-test", &[source_dir.clone()], None).await;
+
+        assert!(matches!(result, Err(BorgError::ArchiveExists { .. })));
     }
 }

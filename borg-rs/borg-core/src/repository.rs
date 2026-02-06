@@ -126,6 +126,8 @@ pub struct Repository {
     compressor: Compressor,
     /// Set of known chunk IDs (loaded from index)
     pub(crate) chunk_index: HashSet<ChunkId>,
+    /// Repository path or URL
+    pub path: String,
     /// Lock information
     lock: Option<LockInfo>,
 }
@@ -133,16 +135,16 @@ pub struct Repository {
 impl Repository {
     /// Initialize a new repository using the given operator
     #[instrument(skip(passphrase))]
-    pub async fn init(op: Operator, passphrase: Option<&str>, config: Option<RepositoryConfig>) -> Result<Self> {
+    pub async fn init(op: Operator, path: String, passphrase: Option<&str>, config: Option<RepositoryConfig>) -> Result<Self> {
         if op.exists("config").await.map_err(|e| BorgError::Repository(e.to_string()))? {
             return Err(BorgError::RepositoryExists {
-                path: "remote".to_string(),
+                path,
             });
         }
 
         let config = config.unwrap_or_default();
         
-        info!("Initializing new repository");
+        info!("Initializing new repository at {}", path);
 
         // Create directory structure (not strictly necessary with some OpenDAL backends but good for layout)
         op.create_dir("data/").await.map_err(|e| BorgError::Repository(e.to_string()))?;
@@ -189,20 +191,21 @@ impl Repository {
             crypto,
             compressor,
             chunk_index: HashSet::new(),
+            path,
             lock: None,
         })
     }
 
     /// Open an existing repository
     #[instrument(skip(passphrase))]
-    pub async fn open(op: Operator, passphrase: Option<&str>) -> Result<Self> {
+    pub async fn open(op: Operator, path: String, passphrase: Option<&str>) -> Result<Self> {
         if !op.exists("config").await.map_err(|e| BorgError::Repository(e.to_string()))? {
             return Err(BorgError::RepositoryNotFound {
-                path: "remote".to_string(),
+                path,
             });
         }
 
-        info!("Opening repository");
+        info!("Opening repository at {}", path);
 
         // Load configuration
         let config_data = op.read("config").await.map_err(|e| BorgError::Repository(e.to_string()))?;
@@ -235,6 +238,7 @@ impl Repository {
             crypto,
             compressor,
             chunk_index,
+            path,
             lock: None,
         })
     }
@@ -533,10 +537,10 @@ mod tests {
         let op = get_test_op(&temp_dir).await;
 
         // Initialize
-        let _repo = Repository::init(op.clone(), Some("test-passphrase"), None).await.unwrap();
+        let _repo = Repository::init(op.clone(), "test-repo".to_string(), Some("test-passphrase"), None).await.unwrap();
 
         // Open
-        let repo = Repository::open(op, Some("test-passphrase")).await.unwrap();
+        let repo = Repository::open(op, "test-repo".to_string(), Some("test-passphrase")).await.unwrap();
         assert!(repo.config().encrypted);
     }
 
@@ -545,7 +549,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let op = get_test_op(&temp_dir).await;
 
-        let mut repo = Repository::init(op, Some("passphrase"), None).await.unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
 
         let chunk = Chunk::new(b"Hello, Borg-Rust!".to_vec());
         let chunk_id = chunk.id.clone();

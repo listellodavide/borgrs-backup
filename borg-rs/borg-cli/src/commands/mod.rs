@@ -27,9 +27,15 @@ use borg_core::storage::{parse_storage_config, build_operator};
 
 /// Get repository path from CLI args or environment
 pub fn get_repo_path(cli: &crate::Cli) -> Result<String> {
+    if let Some(repo) = &cli.local_repo {
+        return Ok(repo.clone());
+    }
+    if let Some(repo) = &cli.remote_repo {
+        return Ok(repo.clone());
+    }
     cli.repo.clone()
         .or_else(|| std::env::var("BORG_REPO").ok())
-        .context("Repository not specified. Use --repo or set BORG_REPO environment variable")
+        .context("Repository not specified. Use --repo, --local-repo, --remote-repo or set BORG_REPO environment variable")
 }
 
 /// Get passphrase from environment or prompt
@@ -73,14 +79,14 @@ pub async fn open_repository(repo_str: &str) -> Result<Repository> {
     let op = build_operator(config)?;
     
     // Try opening without passphrase first (for unencrypted repos)
-    match Repository::open(op.clone(), None).await {
+    match Repository::open(op.clone(), repo_str.to_string(), None).await {
         Ok(repo) => Ok(repo),
         Err(e) => {
             // Check if it's a passphrase error
             if matches!(e, borg_core::error::BorgError::InvalidPassphrase) {
                 // Get passphrase and retry
                 let passphrase = get_passphrase("Enter passphrase: ").await?;
-                Repository::open(op, Some(&passphrase)).await
+                Repository::open(op, repo_str.to_string(), Some(&passphrase)).await
                     .map_err(|e| anyhow::anyhow!("Failed to open repository: {}", e))
             } else {
                 Err(anyhow::anyhow!("Failed to open repository: {}", e))

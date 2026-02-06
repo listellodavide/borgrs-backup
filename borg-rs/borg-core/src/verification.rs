@@ -23,7 +23,7 @@
 //! # async fn doc_example() -> anyhow::Result<()> {
 //! let config = StorageConfig::Local { path: std::path::PathBuf::from("/path/to/repo") };
 //! let op = build_operator(config).unwrap();
-//! let repo = Repository::open(op, Some("passphrase")).await.unwrap();
+//! let repo = Repository::open(op, "/path/to/repo".to_string(), Some("passphrase")).await.unwrap();
 //!
 //! // Verify all chunks
 //! let progress = ConsoleProgress;
@@ -534,7 +534,7 @@ impl Repository {
         info!("Starting comprehensive repository verification");
         let start = std::time::Instant::now();
 
-        let repo_path = "remote".to_string(); // Repository no longer has a single local path
+        let repo_path = self.path.clone();
         let config = self.config();
 
         // Verify config is readable
@@ -1034,7 +1034,7 @@ mod tests {
             path: temp_dir.path().join("repo") 
         }).unwrap();
 
-        let mut repo = Repository::init(op, Some("pass"), None).await.unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("pass"), None).await.unwrap();
 
         let chunk = Chunk::new(b"test data".to_vec());
         let chunk_id = chunk.id.clone();
@@ -1051,7 +1051,7 @@ mod tests {
             path: temp_dir.path().join("repo") 
         }).unwrap();
 
-        let mut repo = Repository::init(op, Some("pass"), None).await.unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("pass"), None).await.unwrap();
 
         // Add several chunks
         for i in 0..10 {

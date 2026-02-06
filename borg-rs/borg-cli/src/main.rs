@@ -19,8 +19,16 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 #[command(propagate_version = true)]
 struct Cli {
     /// Repository location (can also be set via BORG_REPO env var)
-    #[arg(short, long, env = "BORG_REPO", global = true)]
+    #[arg(short, long, env = "BORG_REPO", global = true, conflicts_with_all = ["local_repo", "remote_repo"])]
     repo: Option<String>,
+
+    /// Local repository path
+    #[arg(long, value_name = "PATH", global = true, conflicts_with_all = ["repo", "remote_repo"])]
+    local_repo: Option<String>,
+
+    /// Remote repository URL (s3://, webdav://, https://, sftp://, etc.)
+    #[arg(long, value_name = "URL", global = true, conflicts_with_all = ["repo", "local_repo"])]
+    remote_repo: Option<String>,
 
     /// Log level (trace, debug, info, warn, error)
     #[arg(long, default_value = "warn", global = true)]
