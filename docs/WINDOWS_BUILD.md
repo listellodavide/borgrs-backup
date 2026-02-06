@@ -1,3 +1,4 @@
+````markdown
 # Building on Windows
 
 This project includes a Linux daemon (`borg-daemon`) that uses Unix-specific features like systemd integration, Unix sockets, and POSIX signals. These components are not available on Windows.
@@ -93,3 +94,5 @@ Do NOT try to build the daemon directly on Windows:
 # This will fail on Windows:
 cargo build --release -p borg-daemon
 ```
+
+````

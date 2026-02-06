@@ -1,3 +1,4 @@
+```markdown
 # WebDAV Ingestion Pipeline
 
 This document describes the WebDAV ingestion components implemented in `borg-core::webdav`.
@@ -89,3 +90,4 @@ borg init webdavs://alice:secret@backup.example.com/borg-repo
 
 # List archives later
 borg --repo webdavs://alice:secret@backup.example.com/borg-repo list
+```

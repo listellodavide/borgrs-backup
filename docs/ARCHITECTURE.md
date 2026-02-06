@@ -1,3 +1,4 @@
+````markdown
 # Borg-Rust Architecture
 
 ## Overview
@@ -225,3 +226,5 @@ Borg-Rust aims for format compatibility with BorgBackup where practical:
 - Remote protocol: Compatible (rpc)
 
 Some advanced features may use extended formats that are Borg-Rust specific.
+
+````

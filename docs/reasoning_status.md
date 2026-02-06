@@ -1,3 +1,4 @@
+````markdown
 # Borg-RS Implementation Status & Reasoning
 
 ## Current Progress
@@ -110,40 +111,6 @@
 
 ---
 
-### Phase 3, Task 5: Immutable & Tamper-Resistance Features
-
-**What needs to be done:**
-
-1. **Append-only Repository Mode**
-   - Repository mode flag in config
-   - Prevent deletion operations in append-only mode
-   - Allow only additive operations
-
-2. **Retention Enforcement**
-   - Lock mechanism for archives during retention period
-   - Prevent manual deletion during locked period
-
-3. **Cryptographic Signing**
-   - Sign archive manifests
-   - Verify signatures on archive load
-   - Tamper detection
-
----
-
-### Phase 3, Task 6: Security Features (Encryption & Key Management)
-
-**What needs to be done:**
-
-1. **Key Rotation**
-   - Mechanism to re-encrypt with new key
-   - Key versioning
-
-2. **External Key Providers**
-   - KMS integration trait
-   - HashiCorp Vault support
-
----
-
 ## Architecture Notes
 
 ### Current Module Structure
@@ -240,3 +207,5 @@ borg-cli/src/commands/
    - Doc comments on public types and functions
    - User documentation in `docs/` directory
    - Update `task.md` when completing items
+
+````

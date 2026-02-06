@@ -1,3 +1,4 @@
+````markdown
 # Verification and Integrity Checking
 
 This document describes the verification and integrity checking features in Borg-RS.
@@ -323,3 +324,5 @@ history.save(repo_path)?;
 - [Repository Management](repository.md)
 - [Archive Operations](archives.md)
 - [Data Recovery](recovery.md)
+
+````
