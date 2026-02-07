@@ -10,8 +10,9 @@ use crate::compression::{CompressedData, Compressor, CompressionConfig};
 use crate::crypto::{CryptoProvider, EncryptedData, RepositoryKey};
 use crate::error::{BorgError, Result};
 use crate::metadata::{Snapshot, Tree, EntryKind, RepositoryStats};
+use crate::recovery::{RecoveryCodec, RecoveryProfile};
 use async_trait::async_trait;
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use opendal::Operator;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
@@ -44,6 +45,8 @@ pub struct RepoDescriptor {
     pub storage_engine: String,
     pub encrypted: bool,
     pub compression: CompressionConfig,
+    #[serde(default)]
+    pub recovery_profile: Option<RecoveryProfile>,
 }
 
 impl Default for RepoDescriptor {
@@ -55,6 +58,7 @@ impl Default for RepoDescriptor {
             storage_engine: "object-log-v1".to_string(),
             encrypted: true,
             compression: CompressionConfig::default(),
+            recovery_profile: None,
         }
     }
 }
@@ -83,6 +87,10 @@ pub trait StorageEngine: Send + Sync {
     async fn delete_object(&self, id: &ChunkId) -> Result<()>;
     /// Delete a snapshot
     async fn delete_snapshot(&self, id: &str) -> Result<()>;
+    /// Write recovery data
+    async fn put_recovery(&self, id: &ChunkId, data: &[u8]) -> Result<()>;
+    /// Read recovery data
+    async fn get_recovery(&self, id: &ChunkId) -> Result<Vec<u8>>;
 }
 
 /// ObjectLog V1 Engine
@@ -105,6 +113,11 @@ impl ObjectLogV1 {
     fn object_path(&self, id: &ChunkId) -> String {
         let hex = id.to_hex();
         format!("objects/{}/{}", &hex[..2], &hex[2..])
+    }
+
+    fn recovery_path(&self, id: &ChunkId) -> String {
+        let hex = id.to_hex();
+        format!("recovery/{}/{}.parr", &hex[..2], &hex[2..])
     }
 
     fn parse_id_from_path(&self, path: &str) -> Option<ChunkId> {
@@ -164,20 +177,40 @@ impl StorageEngine for ObjectLogV1 {
     }
 
     async fn list_snapshots(&self) -> Result<Vec<Snapshot>> {
-        // This requires listing the snapshots/ directory
-        // Simplified implementation
-        let mut snapshots = Vec::new();
-        if let Ok(entries) = self.op.list("snapshots/").await {
-            for entry in entries {
-                if entry.path().ends_with(".json") {
-                    if let Ok(data) = self.op.read(entry.path()).await {
-                        if let Ok(snap) = serde_json::from_slice::<Snapshot>(&data.to_vec()) {
-                            snapshots.push(snap);
-                        }
+        let entries = self.op.list("snapshots/").await
+            .map_err(|e| BorgError::Repository(e.to_string()))?;
+
+        let op = self.op.clone();
+        
+        // Create a stream of futures to fetch snapshots in parallel
+        let futures = entries.into_iter()
+            .filter(|e| e.path().ends_with(".json"))
+            .map(|entry| {
+                let op = op.clone();
+                async move {
+                    let data = op.read(entry.path()).await
+                        .map_err(|e| BorgError::Repository(e.to_string()))?;
+                    let snap: Snapshot = serde_json::from_slice(&data.to_vec())
+                        .map_err(|e| BorgError::Deserialization(e.to_string()))?;
+                    Ok::<_, BorgError>(snap)
+                }
+            });
+
+        // Execute up to 10 fetches concurrently
+        let snapshots: Vec<Snapshot> = futures_util::stream::iter(futures)
+            .buffer_unordered(10)
+            .filter_map(|res| async {
+                match res {
+                    Ok(snap) => Some(snap),
+                    Err(e) => {
+                        warn!("Failed to load snapshot: {}", e);
+                        None
                     }
                 }
-            }
-        }
+            })
+            .collect()
+            .await;
+
         Ok(snapshots)
     }
 
@@ -207,6 +240,17 @@ impl StorageEngine for ObjectLogV1 {
         self.op.delete(&path).await
             .map_err(|e| BorgError::Repository(e.to_string()))
     }
+
+    async fn put_recovery(&self, id: &ChunkId, data: &[u8]) -> Result<()> {
+        self.op.write(&self.recovery_path(id), data.to_vec()).await
+            .map_err(|e| BorgError::Repository(e.to_string()))
+    }
+
+    async fn get_recovery(&self, id: &ChunkId) -> Result<Vec<u8>> {
+        let data = self.op.read(&self.recovery_path(id)).await
+            .map_err(|e| BorgError::Repository(e.to_string()))?;
+        Ok(data.to_vec())
+    }
 }
 
 /// Repository handle
@@ -218,6 +262,7 @@ pub struct Repository {
     // Local cache of known chunks to avoid remote lookups
     // In a full implementation, this would be persisted locally (e.g. SQLite/Sled)
     pub(crate) chunk_cache: HashSet<ChunkId>,
+    recovery_codec: Option<RecoveryCodec>,
 }
 
 impl Repository {
@@ -256,6 +301,12 @@ impl Repository {
 
         let compressor = Compressor::new(descriptor.compression.clone());
 
+        let recovery_codec = if let Some(profile) = descriptor.recovery_profile {
+            Some(RecoveryCodec::new(profile)?)
+        } else {
+            None
+        };
+
         info!("Repository initialized successfully");
 
         Ok(Self {
@@ -264,6 +315,7 @@ impl Repository {
             crypto,
             compressor,
             chunk_cache: HashSet::new(),
+            recovery_codec,
         })
     }
 
@@ -293,12 +345,19 @@ impl Repository {
 
         let compressor = Compressor::new(descriptor.compression.clone());
 
+        let recovery_codec = if let Some(profile) = descriptor.recovery_profile {
+            Some(RecoveryCodec::new(profile)?)
+        } else {
+            None
+        };
+
         Ok(Self {
             engine,
             descriptor,
             crypto,
             compressor,
             chunk_cache: HashSet::new(),
+            recovery_codec,
         })
     }
 
@@ -338,6 +397,12 @@ impl Repository {
         // Write to storage
         self.engine.put_object(&chunk.id, &data_to_store).await?;
 
+        // Generate and write recovery data if enabled
+        if let Some(codec) = &self.recovery_codec {
+            let parity = codec.encode(&data_to_store)?;
+            self.engine.put_recovery(&chunk.id, &parity).await?;
+        }
+
         // Update index
         self.chunk_cache.insert(chunk.id.clone());
 
@@ -372,6 +437,55 @@ impl Repository {
         // Verify integrity
         let computed_id = ChunkId::from_data(&data);
         if computed_id != *id {
+            // Integrity check failed, attempt recovery if enabled
+            if let Some(codec) = &self.recovery_codec {
+                warn!("Chunk {} corrupted, attempting recovery...", id);
+                let parity = self.engine.get_recovery(id).await?;
+                let recovered_data = codec.reconstruct(&stored_data, &parity)?;
+                
+                // Verify recovered data
+                // Note: We recovered the *encrypted/compressed* blob. We need to decrypt/decompress again to check ID?
+                // No, we should check if the recovered blob matches what we expect? 
+                // Actually, we can just proceed with the recovered blob as if it was what we read.
+                // But we need to re-run the decryption/decompression pipeline on the recovered blob.
+                // For simplicity, we return a recursive call or just re-run the logic.
+                // Since we are at the end of the function, let's just return the recovered chunk if it passes.
+                // However, we need to decrypt/decompress the *recovered* blob.
+                // Let's recurse once? No, infinite loop risk.
+                // Let's just re-process `recovered_data` (which is `stored_data` equivalent).
+                
+                // Decrypt recovered
+                let compressed: CompressedData = if let Some(ref crypto) = self.crypto {
+                    let encrypted: EncryptedData = bincode::deserialize(&recovered_data)
+                        .map_err(|e| BorgError::Deserialization(e.to_string()))?;
+                    let decrypted = crypto.decrypt(&encrypted)?;
+                    bincode::deserialize(&decrypted)
+                        .map_err(|e| BorgError::Deserialization(e.to_string()))?
+                } else {
+                    bincode::deserialize(&recovered_data)
+                        .map_err(|e| BorgError::Deserialization(e.to_string()))?
+                };
+
+                // Decompress recovered
+                let data = self.compressor.decompress(&compressed)?;
+                
+                // Verify integrity of recovered data
+                let computed_id = ChunkId::from_data(&data);
+                if computed_id != *id {
+                     return Err(BorgError::IntegrityCheck {
+                        expected: id.to_hex(),
+                        actual: computed_id.to_hex(),
+                    });
+                }
+                
+                info!("Chunk {} successfully recovered", id);
+                return Ok(Chunk {
+                    id: id.clone(),
+                    data,
+                    original_size: compressed.original_size as usize,
+                });
+            }
+
             return Err(BorgError::IntegrityCheck {
                 expected: id.to_hex(),
                 actual: computed_id.to_hex(),

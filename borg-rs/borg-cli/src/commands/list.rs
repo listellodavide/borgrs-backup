@@ -4,7 +4,7 @@
 //! Supports filtering, sorting, and various output formats.
 
 use anyhow::Result;
-use borg_core::archive::{ArchiveExtractor, ArchiveItem, ItemType};
+use borg_core::archive::{ArchiveRestorer, ArchiveItem, ItemType};
 use borg_core::repository::ArchiveRef;
 use serde::Serialize;
 
@@ -97,8 +97,8 @@ async fn list_archive_contents(
     archive_name: &str,
     args: &ListArgs,
 ) -> Result<()> {
-    let extractor = ArchiveExtractor::new(repo);
-    let archive = extractor.load_archive(archive_name).await?;
+    let restorer = ArchiveRestorer::new(repo);
+    let archive = restorer.load_archive(archive_name).await?;
 
     let mut items: Vec<_> = archive.items.iter().collect();
 

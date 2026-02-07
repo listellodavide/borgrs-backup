@@ -1,11 +1,14 @@
-use crate::chunker::{Chunk, ChunkId, Chunker, ChunkerConfig};
+use crate::chunker::{choose_profile_for_size, ChunkId, Chunker, ChunkerProfile};
 use crate::error::{BorgError, Result};
 use crate::exclusion::ExclusionList;
-use crate::repository::{ArchiveRef, Repository};
+use crate::repository::Repository;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
+use chrono::{DateTime, Utc};
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use tracing::{debug, info, instrument, warn};
 use walkdir::WalkDir;
 
@@ -131,11 +134,18 @@ pub struct ArchiveItem {
     pub symlink_target: Option<PathBuf>,
     /// Hard link target path (for hardlinks only)
     pub hardlink_target: Option<PathBuf>,
+    /// Chunker profile used for this file
+    #[serde(default = "default_chunker_profile")]
+    pub chunker_profile: ChunkerProfile,
+}
+
+fn default_chunker_profile() -> ChunkerProfile {
+    ChunkerProfile::Size4M // For backward compatibility
 }
 
 impl ArchiveItem {
     /// Create a new file item
-    pub fn file(path: PathBuf, meta: &Metadata, chunks: Vec<ChunkId>) -> Self {
+    pub fn file(path: PathBuf, meta: &Metadata, chunks: Vec<ChunkId>, profile: ChunkerProfile) -> Self {
         Self {
             path,
             item_type: ItemType::File,
@@ -144,6 +154,7 @@ impl ArchiveItem {
             chunks,
             symlink_target: None,
             hardlink_target: None,
+            chunker_profile: profile,
         }
     }
 
@@ -157,6 +168,7 @@ impl ArchiveItem {
             chunks: Vec::new(),
             symlink_target: None,
             hardlink_target: None,
+            chunker_profile: ChunkerProfile::Default, // Not applicable
         }
     }
 
@@ -170,6 +182,7 @@ impl ArchiveItem {
             chunks: Vec::new(),
             symlink_target: Some(target),
             hardlink_target: None,
+            chunker_profile: ChunkerProfile::Default, // Not applicable
         }
     }
 }
@@ -180,7 +193,7 @@ pub struct ArchiveMetadata {
     /// Archive name
     pub name: String,
     /// Creation timestamp
-    pub time: chrono::DateTime<chrono::Utc>,
+    pub time: DateTime<Utc>,
     /// Hostname where the backup was created
     pub hostname: String,
     /// Username who created the backup
@@ -189,6 +202,8 @@ pub struct ArchiveMetadata {
     pub cmdline: Vec<String>,
     /// Comment (optional)
     pub comment: Option<String>,
+    /// Tags (optional)
+    pub tags: Option<Vec<String>>,
 }
 
 /// A complete archive containing items and metadata
@@ -249,8 +264,8 @@ impl BackupProgress for NullProgress {
 pub struct ArchiveCreator<'a> {
     /// Repository to store data
     repo: &'a mut Repository,
-    /// Chunker for splitting files
-    chunker: Chunker,
+    /// Forced chunker profile, if any
+    forced_chunker_profile: Option<ChunkerProfile>,
     /// Exclusion list
     exclusions: ExclusionList,
     /// Progress reporter
@@ -264,17 +279,17 @@ impl<'a> ArchiveCreator<'a> {
     pub fn new(repo: &'a mut Repository) -> Self {
         Self {
             repo,
-            chunker: Chunker::with_defaults(),
+            forced_chunker_profile: None,
             exclusions: ExclusionList::new(),
             progress: Box::new(NullProgress),
             hardlinks: HashMap::new(),
         }
     }
 
-    /// Set chunker configuration
-    pub fn with_chunker_config(mut self, config: ChunkerConfig) -> Result<Self> {
-        self.chunker = Chunker::new(config)?;
-        Ok(self)
+    /// Set a forced chunker profile
+    pub fn with_forced_chunker_profile(mut self, profile: ChunkerProfile) -> Self {
+        self.forced_chunker_profile = Some(profile);
+        self
     }
 
     /// Set exclusion list
@@ -296,6 +311,7 @@ impl<'a> ArchiveCreator<'a> {
         name: &str,
         paths: &[PathBuf],
         comment: Option<String>,
+        tags: Option<Vec<String>>,
     ) -> Result<Archive> {
         info!("Creating archive '{}' from {} paths", name, paths.len());
 
@@ -309,11 +325,12 @@ impl<'a> ArchiveCreator<'a> {
 
         let metadata = ArchiveMetadata {
             name: name.to_string(),
-            time: chrono::Utc::now(),
+            time: Utc::now(),
             hostname: gethostname(),
             username: get_username(),
             cmdline: std::env::args().collect(),
             comment,
+            tags,
         };
 
         let mut items = Vec::new();
@@ -433,7 +450,7 @@ impl<'a> ArchiveCreator<'a> {
                         if let Some(first_path) = self.hardlinks.get(&inode) {
                             // This is a hard link to an already-seen file
                             stats.nfiles += 1;
-                            let mut item = ArchiveItem::file(relative_path, meta, Vec::new());
+                            let mut item = ArchiveItem::file(relative_path, meta, Vec::new(), ChunkerProfile::Default);
                             item.item_type = ItemType::Hardlink;
                             item.hardlink_target = Some(first_path.clone());
                             self.progress.on_file_complete(path, meta.len(), 0);
@@ -445,6 +462,14 @@ impl<'a> ArchiveCreator<'a> {
                     }
                 }
 
+                // Determine chunker profile
+                let profile = self.forced_chunker_profile.unwrap_or_else(|| {
+                    let size_mb = meta.len() / (1024 * 1024);
+                    choose_profile_for_size(size_mb)
+                });
+
+                let chunker = Chunker::from_profile(profile);
+
                 // Read and chunk the file
                 let file_data = match fs::read(path) {
                     Ok(d) => d,
@@ -455,7 +480,7 @@ impl<'a> ArchiveCreator<'a> {
                     }
                 };
 
-                let chunks = self.chunker.chunk_data(&file_data);
+                let chunks = chunker.chunk_data(&file_data);
                 let mut chunk_ids = Vec::with_capacity(chunks.len());
 
                 for chunk in chunks {
@@ -475,7 +500,7 @@ impl<'a> ArchiveCreator<'a> {
 
                 self.progress.on_file_complete(path, meta.len(), chunk_ids.len());
 
-                Ok(Some(ArchiveItem::file(relative_path, meta, chunk_ids)))
+                Ok(Some(ArchiveItem::file(relative_path, meta, chunk_ids, profile)))
             }
             ItemType::Symlink => {
                 let target = fs::read_link(path)?;
@@ -490,25 +515,25 @@ impl<'a> ArchiveCreator<'a> {
     }
 }
 
-/// Archive extractor for restoring backups
-pub struct ArchiveExtractor<'a> {
+/// Archive restorer for restoring backups
+pub struct ArchiveRestorer<'a> {
     /// Repository to read from
     repo: &'a Repository,
 }
 
-impl<'a> ArchiveExtractor<'a> {
-    /// Create a new extractor
+impl<'a> ArchiveRestorer<'a> {
+    /// Create a new restorer
     pub fn new(repo: &'a Repository) -> Self {
         Self { repo }
     }
 
-    /// Extract an archive to a destination path
+    /// Restore an archive to a destination path
     #[instrument(skip(self))]
-    pub async fn extract(&self, archive_name: &str, dest: &Path) -> Result<ExtractStats> {
-        info!("Extracting archive '{}' to {}", archive_name, dest.display());
+    pub async fn restore(&self, archive_name: &str, dest: &Path) -> Result<RestoreStats> {
+        info!("Restoring archive '{}' to {}", archive_name, dest.display());
 
         let archive = self.load_archive(archive_name).await?;
-        let mut stats = ExtractStats::default();
+        let mut stats = RestoreStats::default();
 
         fs::create_dir_all(dest)?;
 
@@ -516,7 +541,7 @@ impl<'a> ArchiveExtractor<'a> {
         let mut items = archive.items.clone();
         items.sort_by(|a, b| a.path.cmp(&b.path));
 
-        // First pass: Extract directories, files, and symlinks
+        // First pass: Restore directories, files, and symlinks
         for item in &items {
             if item.item_type == ItemType::Hardlink {
                 continue;
@@ -528,7 +553,7 @@ impl<'a> ArchiveExtractor<'a> {
                 ItemType::Directory => {
                     fs::create_dir_all(&target_path)?;
                     self.restore_attributes(&target_path, &item.attrs)?;
-                    stats.dirs_extracted += 1;
+                    stats.dirs_restored += 1;
                 }
                 ItemType::File => {
                     if let Some(parent) = target_path.parent() {
@@ -544,8 +569,8 @@ impl<'a> ArchiveExtractor<'a> {
 
                     fs::write(&target_path, &file_data)?;
                     self.restore_attributes(&target_path, &item.attrs)?;
-                    stats.files_extracted += 1;
-                    stats.bytes_extracted += file_data.len() as u64;
+                    stats.files_restored += 1;
+                    stats.bytes_restored += file_data.len() as u64;
                 }
                 ItemType::Symlink => {
                     if let Some(target) = &item.symlink_target {
@@ -554,14 +579,14 @@ impl<'a> ArchiveExtractor<'a> {
                         }
                         #[cfg(unix)]
                         std::os::unix::fs::symlink(target, &target_path)?;
-                        stats.symlinks_extracted += 1;
+                        stats.symlinks_restored += 1;
                     }
                 }
                 _ => {}
             }
         }
 
-        // Second pass: Extract hardlinks
+        // Second pass: Restore hardlinks
         for item in &items {
             if item.item_type == ItemType::Hardlink {
                 let target_path = dest.join(&item.path);
@@ -572,8 +597,8 @@ impl<'a> ArchiveExtractor<'a> {
                     }
                     // Ensure the source exists before linking
                     if link_source.exists() {
-                        std::fs::hard_link(&link_source, &target_path)?;
-                        stats.hardlinks_extracted += 1;
+                        fs::hard_link(&link_source, &target_path)?;
+                        stats.hardlinks_restored += 1;
                     } else {
                         warn!("Hardlink source not found: {}", link_source.display());
                     }
@@ -582,26 +607,26 @@ impl<'a> ArchiveExtractor<'a> {
         }
 
         info!(
-            "Extracted {} files, {} dirs, {} bytes",
-            stats.files_extracted, stats.dirs_extracted, stats.bytes_extracted
+            "Restored {} files, {} dirs, {} bytes",
+            stats.files_restored, stats.dirs_restored, stats.bytes_restored
         );
 
         Ok(stats)
     }
 
-    /// Extract specific paths from an archive to a destination
+    /// Restore specific paths from an archive to a destination
     #[instrument(skip(self, paths))]
-    pub async fn extract_paths(&self, archive_name: &str, dest: &Path, paths: &[PathBuf]) -> Result<ExtractStats> {
-        info!("Extracting {} paths from archive '{}' to {}", paths.len(), archive_name, dest.display());
+    pub async fn restore_paths(&self, archive_name: &str, dest: &Path, paths: &[PathBuf]) -> Result<RestoreStats> {
+        info!("Restoring {} paths from archive '{}' to {}", paths.len(), archive_name, dest.display());
 
         let archive = self.load_archive(archive_name).await?;
-        let mut stats = ExtractStats::default();
+        let mut stats = RestoreStats::default();
 
         fs::create_dir_all(dest)?;
 
         // Filter items based on requested paths
-        // If paths is empty, extract everything (default behavior)
-        // Otherwise, only extract items that match one of the requested paths
+        // If paths is empty, restore everything (default behavior)
+        // Otherwise, only restore items that match one of the requested paths
         let items: Vec<_> = if paths.is_empty() {
             archive.items.clone()
         } else {
@@ -614,7 +639,7 @@ impl<'a> ArchiveExtractor<'a> {
         let mut items = items;
         items.sort_by(|a, b| a.path.cmp(&b.path));
 
-        // First pass: Extract directories, files, and symlinks
+        // First pass: Restore directories, files, and symlinks
         for item in &items {
             if item.item_type == ItemType::Hardlink {
                 continue;
@@ -626,7 +651,7 @@ impl<'a> ArchiveExtractor<'a> {
                 ItemType::Directory => {
                     fs::create_dir_all(&target_path)?;
                     self.restore_attributes(&target_path, &item.attrs)?;
-                    stats.dirs_extracted += 1;
+                    stats.dirs_restored += 1;
                 }
                 ItemType::File => {
                     if let Some(parent) = target_path.parent() {
@@ -642,8 +667,8 @@ impl<'a> ArchiveExtractor<'a> {
                     
                     fs::write(&target_path, &file_data)?;
                     self.restore_attributes(&target_path, &item.attrs)?;
-                    stats.files_extracted += 1;
-                    stats.bytes_extracted += file_data.len() as u64;
+                    stats.files_restored += 1;
+                    stats.bytes_restored += file_data.len() as u64;
                 }
                 ItemType::Symlink => {
                     if let Some(target) = &item.symlink_target {
@@ -652,14 +677,14 @@ impl<'a> ArchiveExtractor<'a> {
                         }
                         #[cfg(unix)]
                         std::os::unix::fs::symlink(target, &target_path)?;
-                        stats.symlinks_extracted += 1;
+                        stats.symlinks_restored += 1;
                     }
                 }
                 _ => {}
             }
         }
 
-        // Second pass: Extract hardlinks
+        // Second pass: Restore hardlinks
         for item in &items {
             if item.item_type == ItemType::Hardlink {
                 let target_path = dest.join(&item.path);
@@ -670,8 +695,8 @@ impl<'a> ArchiveExtractor<'a> {
                     }
                     // Ensure the source exists before linking
                     if link_source.exists() {
-                        std::fs::hard_link(&link_source, &target_path)?;
-                        stats.hardlinks_extracted += 1;
+                        fs::hard_link(&link_source, &target_path)?;
+                        stats.hardlinks_restored += 1;
                     } else {
                         warn!("Hardlink source not found: {}", link_source.display());
                     }
@@ -680,8 +705,8 @@ impl<'a> ArchiveExtractor<'a> {
         }
 
         info!(
-            "Extracted {} files, {} dirs, {} bytes",
-            stats.files_extracted, stats.dirs_extracted, stats.bytes_extracted
+            "Restored {} files, {} dirs, {} bytes",
+            stats.files_restored, stats.dirs_restored, stats.bytes_restored
         );
 
         Ok(stats)
@@ -710,7 +735,7 @@ impl<'a> ArchiveExtractor<'a> {
         #[derive(Deserialize)]
         struct ArchiveMetadataV1 {
             name: String,
-            time: chrono::DateTime<chrono::Utc>,
+            time: DateTime<Utc>,
             hostname: String,
             username: String,
             cmdline: Vec<String>,
@@ -735,6 +760,7 @@ impl<'a> ArchiveExtractor<'a> {
                 chunks: item.chunks,
                 symlink_target: item.symlink_target,
                 hardlink_target: None,
+                chunker_profile: default_chunker_profile(),
             }
         };
 
@@ -755,6 +781,7 @@ impl<'a> ArchiveExtractor<'a> {
                     username: v1.metadata.username,
                     cmdline: v1.metadata.cmdline,
                     comment: None,
+                    tags: None,
                 },
                 items: v1.items.into_iter().map(convert_item).collect(),
                 stats: v1.stats,
@@ -787,7 +814,7 @@ impl<'a> ArchiveExtractor<'a> {
             use std::os::unix::fs::PermissionsExt;
             
             // Set permissions
-            let perms = std::fs::Permissions::from_mode(attrs.mode);
+            let perms = fs::Permissions::from_mode(attrs.mode);
             let _ = fs::set_permissions(path, perms);
 
             // Time restoration usually requires more crates or platform specific calls
@@ -797,40 +824,91 @@ impl<'a> ArchiveExtractor<'a> {
     }
 }
 
-/// Statistics for extraction operations
+/// Statistics for restoration operations
 #[derive(Debug, Default, Clone)]
-pub struct ExtractStats {
-    /// Files extracted
-    pub files_extracted: u64,
-    /// Directories extracted
-    pub dirs_extracted: u64,
-    /// Symlinks extracted
-    pub symlinks_extracted: u64,
-    /// Hard links extracted
-    pub hardlinks_extracted: u64,
-    /// Total bytes extracted
-    pub bytes_extracted: u64,
+pub struct RestoreStats {
+    /// Files restored
+    pub files_restored: u64,
+    /// Directories restored
+    pub dirs_restored: u64,
+    /// Symlinks restored
+    pub symlinks_restored: u64,
+    /// Hard links restored
+    pub hardlinks_restored: u64,
+    /// Total bytes restored
+    pub bytes_restored: u64,
+}
+
+fn get_ntp_timestamp(servers: &[&str]) -> DateTime<Utc> {
+    let mut rng = thread_rng();
+    let mut list: Vec<_> = servers.to_vec();
+    list.shuffle(&mut rng);
+
+    for server in list {
+        let target = format!("{}:123", server);
+        if let Ok(client) = ntp_client::Client::new().target(&target) {
+            if let Ok(response) = client.request() {
+                if let Some(datetime) = response.get_datetime_utc() {
+                    return datetime;
+                }
+            }
+        }
+    }
+    Utc::now() // local fallback
+}
+
+// backup_archive_ptintime_<hostname>_<username>_<YYYY-MM-DDTHH:mm:ss.sssZ>
+pub fn default_archive_unique_name() -> String {
+  let ntp_servers = [
+      "ntp1.inrim.it",
+      "ntp2.inrim.it",
+      "0.it.pool.ntp.org",
+      "1.it.pool.ntp.org",
+      "0.ch.pool.ntp.org",
+      "1.ch.pool.ntp.org",
+  ];
+
+  let ts = get_ntp_timestamp(&ntp_servers);
+  let hostname = gethostname();
+  let username = get_username();
+
+  format!(
+      "backup_archive_ptintime_{}_{}_{}",
+      hostname,
+      username,
+      ts.format("%Y-%m-%dT%H:%M:%S%.3fZ")
+  )
 }
 
 /// Get the system hostname
 fn gethostname() -> String {
-    #[cfg(unix)]
-    {
-        std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string())
-    }
-    #[cfg(not(unix))]
-    {
-        std::env::var("COMPUTERNAME").unwrap_or_else(|_| "unknown".to_string())
-    }
+    hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .or_else(|| std::env::var("HOSTNAME").ok())      // Linux/macOS fallback
+        .or_else(|| std::env::var("COMPUTERNAME").ok())  // Windows fallback
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Get current username
 fn get_username() -> String {
     #[cfg(unix)]
     {
+        use libc::{getuid, getpwuid};
+        use std::ffi::CStr;
+
+        unsafe {
+            let uid = getuid();
+            let pw = getpwuid(uid);
+            if !pw.is_null() && !(*pw).pw_name.is_null() {
+                let name = CStr::from_ptr((*pw).pw_name);
+                return name.to_string_lossy().into_owned();
+            }
+        }
         std::env::var("USER").unwrap_or_else(|_| "unknown".to_string())
     }
-    #[cfg(not(unix))]
+
+    #[cfg(windows)]
     {
         std::env::var("USERNAME").unwrap_or_else(|_| "unknown".to_string())
     }
@@ -864,7 +942,7 @@ mod tests {
         // Create archive
         let creator = ArchiveCreator::new(&mut repo);
         let archive = creator
-            .create("test-archive", &[source_dir.clone()], None)
+            .create("test-archive", &[source_dir.clone()], None, None)
             .await
             .unwrap();
 
@@ -889,15 +967,17 @@ mod tests {
             chunks: vec![ChunkId::new([1u8; 32])],
             symlink_target: None,
             hardlink_target: None,
+            chunker_profile: ChunkerProfile::Size8M,
         };
 
         let metadata = ArchiveMetadata {
             name: "test-archive".to_string(),
-            time: chrono::Utc::now(),
+            time: Utc::now(),
             hostname: "localhost".to_string(),
             username: "user".to_string(),
             cmdline: vec!["borg".to_string(), "create".to_string()],
             comment: Some("test comment".to_string()),
+            tags: Some(vec!["tag1".to_string(), "tag2".to_string()]),
         };
 
         let archive = Archive {
@@ -916,6 +996,8 @@ mod tests {
         assert_eq!(decoded.items.len(), 1);
         assert_eq!(decoded.items[0].path, PathBuf::from("test/file"));
         assert_eq!(decoded.items[0].symlink_target, None);
+        assert_eq!(decoded.metadata.tags, Some(vec!["tag1".to_string(), "tag2".to_string()]));
+        assert_eq!(decoded.items[0].chunker_profile, ChunkerProfile::Size8M);
     }
 
     #[tokio::test]
@@ -930,7 +1012,7 @@ mod tests {
 
         let creator = ArchiveCreator::new(&mut repo);
         let archive = creator
-            .create("empty-archive", &[source_dir.clone()], None)
+            .create("empty-archive", &[source_dir.clone()], None, None)
             .await
             .unwrap();
 
@@ -939,7 +1021,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_archive_extraction() {
+    async fn test_archive_restoration() {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path().join("repo");
         let source_dir = temp_dir.path().join("source");
@@ -955,15 +1037,15 @@ mod tests {
         let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
         let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
         let creator = ArchiveCreator::new(&mut repo);
-        creator.create("backup1", &[source_dir.clone()], None).await.unwrap();
+        creator.create("backup1", &[source_dir.clone()], None, None).await.unwrap();
 
-        // Extract archive
+        // Restore archive
         let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
-        let extractor = ArchiveExtractor::new(&repo);
-        let stats = extractor.extract("backup1", &restore_dir).await.unwrap();
+        let restorer = ArchiveRestorer::new(&repo);
+        let stats = restorer.restore("backup1", &restore_dir).await.unwrap();
 
-        assert_eq!(stats.files_extracted, 2);
-        assert_eq!(stats.dirs_extracted, 2);
+        assert_eq!(stats.files_restored, 2);
+        assert_eq!(stats.dirs_restored, 2);
 
         // Verify content
         let restored_data = fs::read_to_string(restore_dir.join("data.txt")).unwrap();
@@ -992,18 +1074,18 @@ mod tests {
             let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
 
             let creator = ArchiveCreator::new(&mut repo);
-            let archive = creator.create("symlink-test", &[source_dir.clone()], None).await.unwrap();
+            let archive = creator.create("symlink-test", &[source_dir.clone()], None, None).await.unwrap();
 
             // Check archive stats
             // 1 file, 1 dir (root), 1 symlink
             assert_eq!(archive.stats.nfiles, 1);
 
-            // Extract
+            // Restore
             let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
-            let extractor = ArchiveExtractor::new(&repo);
-            let stats = extractor.extract("symlink-test", &restore_dir).await.unwrap();
+            let restorer = ArchiveRestorer::new(&repo);
+            let stats = restorer.restore("symlink-test", &restore_dir).await.unwrap();
 
-            assert_eq!(stats.symlinks_extracted, 1);
+            assert_eq!(stats.symlinks_restored, 1);
 
             // Verify symlink
             let link_path = restore_dir.join("link.txt");
@@ -1033,19 +1115,19 @@ mod tests {
             let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
 
             let creator = ArchiveCreator::new(&mut repo);
-            let archive = creator.create("hardlink-test", &[source_dir.clone()], None).await.unwrap();
+            let archive = creator.create("hardlink-test", &[source_dir.clone()], None, None).await.unwrap();
 
             // Should have 2 files, but deduplicated chunks
             assert_eq!(archive.stats.nfiles, 2);
             // Only one file's worth of chunks should be unique
             assert_eq!(archive.stats.nchunks_unique, archive.stats.nchunks);
 
-            // Extract
+            // Restore
             let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
-            let extractor = ArchiveExtractor::new(&repo);
-            let stats = extractor.extract("hardlink-test", &restore_dir).await.unwrap();
+            let restorer = ArchiveRestorer::new(&repo);
+            let stats = restorer.restore("hardlink-test", &restore_dir).await.unwrap();
 
-            assert_eq!(stats.hardlinks_extracted, 1);
+            assert_eq!(stats.hardlinks_restored, 1);
 
             // Verify hardlink relationship
             let r_file1 = restore_dir.join("file1.txt");
@@ -1079,7 +1161,7 @@ mod tests {
         exclusions.add_pattern(ExclusionPattern::glob("**/node_modules")).unwrap();
 
         let creator = ArchiveCreator::new(&mut repo).with_exclusions(exclusions);
-        let archive = creator.create("exclude-test", &[source_dir.clone()], None).await.unwrap();
+        let archive = creator.create("exclude-test", &[source_dir.clone()], None, None).await.unwrap();
 
         // Should only contain include.txt and the root dir
         assert_eq!(archive.stats.nfiles, 1);
@@ -1102,10 +1184,10 @@ mod tests {
         let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
 
         let creator = ArchiveCreator::new(&mut repo);
-        creator.create("dup-test", &[source_dir.clone()], None).await.unwrap();
+        creator.create("dup-test", &[source_dir.clone()], None, None).await.unwrap();
 
         let creator = ArchiveCreator::new(&mut repo);
-        let result = creator.create("dup-test", &[source_dir.clone()], None).await;
+        let result = creator.create("dup-test", &[source_dir.clone()], None, None).await;
 
         assert!(matches!(result, Err(BorgError::ArchiveExists { .. })));
     }

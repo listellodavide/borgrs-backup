@@ -667,13 +667,13 @@ impl Repository {
         archive_name: &str,
         config: RestoreTestConfig,
     ) -> Result<RestoreTestReport> {
-        use crate::archive::{ArchiveExtractor, ItemType};
+        use crate::archive::{ArchiveRestorer, ItemType};
 
         info!("Starting restore test for archive '{}'", archive_name);
         let start = std::time::Instant::now();
 
-        let extractor = ArchiveExtractor::new(self);
-        let archive = extractor.load_archive(archive_name).await?;
+        let restorer = ArchiveRestorer::new(self);
+        let archive = restorer.load_archive(archive_name).await?;
 
         // Select files to test
         let file_items: Vec<_> = archive.items.iter()
@@ -934,8 +934,8 @@ impl Repository {
         info!("Verifying archive: {}", archive_name);
 
         // Load archive metadata
-        let extractor = crate::archive::ArchiveExtractor::new(self);
-        let archive = extractor.load_archive(archive_name).await?;
+        let restorer = crate::archive::ArchiveRestorer::new(self);
+        let archive = restorer.load_archive(archive_name).await?;
         
         let total_items = archive.items.len();
         let mut verified_items = 0;
@@ -972,11 +972,6 @@ impl Repository {
     /// Helper: Get count of chunks
     pub(crate) fn chunk_count(&self) -> usize {
         self.chunk_index_len()
-    }
-
-    /// Helper: Iterate over chunk IDs in the index
-    pub(crate) fn chunk_index_iter(&self) -> impl Iterator<Item = &ChunkId> {
-        self.chunk_index_iterator()
     }
 
     /// Find orphaned chunks (chunks on storage but not in index)

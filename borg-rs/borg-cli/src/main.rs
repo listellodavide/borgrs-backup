@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, Args};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use borg_core::chunker::ChunkerProfile;
 
 /// Borg-Rust - Deduplicating backup program
 #[derive(Parser, Debug)]
@@ -26,7 +27,7 @@ struct Cli {
     #[arg(long, value_name = "PATH", global = true, conflicts_with_all = ["repo", "remote_repo"])]
     local_repo: Option<String>,
 
-    /// Remote repository URL (s3://, webdav://, https://, sftp://, etc.)
+    /// Remote repository URL (s3://, webdav://, https://, etc.)
     #[arg(long, value_name = "URL", global = true, conflicts_with_all = ["repo", "local_repo"])]
     remote_repo: Option<String>,
 
@@ -70,8 +71,8 @@ enum Commands {
     /// Create a new backup archive
     Create(CreateArgs),
 
-    /// Extract files from an archive
-    Extract(ExtractArgs),
+    /// Restore files from an archive
+    Restore(RestoreArgs),
 
     /// List repository contents or archive contents
     List(ListArgs),
@@ -154,13 +155,17 @@ struct InitArgs {
     /// Storage quota (e.g., "100G")
     #[arg(long)]
     storage_quota: Option<String>,
+
+    /// Recovery set overhead percentage (7, 13, 25)
+    #[arg(long, value_parser = clap::value_parser!(u8))]
+    recovery_set: Option<u8>,
 }
 
 #[derive(Args, Debug)]
 struct CreateArgs {
-    /// Archive name
-    #[arg(required = true)]
-    archive: String,
+    /// Manually specify archive name, otherwise a unique name is generated
+    #[arg(long = "force-archive-name")]
+    archive: Option<String>,
 
     /// Paths to back up
     #[arg(required = true)]
@@ -222,6 +227,10 @@ struct CreateArgs {
     #[arg(long)]
     comment: Option<String>,
 
+    /// Add tags to the archive
+    #[arg(long, action = clap::ArgAction::Append)]
+    tags: Option<Vec<String>>,
+
     /// Timestamp for archive (ISO format or "now")
     #[arg(long)]
     timestamp: Option<String>,
@@ -229,6 +238,10 @@ struct CreateArgs {
     /// Checkpoint interval in seconds
     #[arg(long, default_value = "1800")]
     checkpoint_interval: u64,
+
+    /// Force a specific chunker profile (e.g., 1mb, 4mb, default)
+    #[arg(long)]
+    force_chunk_profile: Option<ChunkerProfile>,
 
     /// Dry run (don't create archive)
     #[arg(short = 'n', long)]
@@ -248,7 +261,7 @@ struct CreateArgs {
 }
 
 #[derive(Args, Debug)]
-struct ExtractArgs {
+struct RestoreArgs {
     /// Archive name
     #[arg(required = true)]
     archive: String,
@@ -708,7 +721,7 @@ async fn main() -> Result<()> {
     let result = match &cli.command {
         Commands::Init(args) => commands::init::run(&cli, args).await,
         Commands::Create(args) => commands::create::run(&cli, args).await,
-        Commands::Extract(args) => commands::extract::run(&cli, args).await,
+        Commands::Restore(args) => commands::restore::run(&cli, args).await,
         Commands::List(args) => commands::list::run(&cli, args).await,
         Commands::Info(args) => commands::info::run(&cli, args).await,
         Commands::Delete(args) => commands::delete::run(&cli, args).await,

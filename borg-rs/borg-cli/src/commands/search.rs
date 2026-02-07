@@ -4,7 +4,7 @@
 //! by path pattern, file type, size, and modification time.
 
 use anyhow::Result;
-use borg_core::archive::{ArchiveExtractor, ItemType};
+use borg_core::archive::{ArchiveRestorer, ItemType};
 use borg_core::catalog::{SearchQuery, SearchResult};
 
 use super::{get_repo_path, open_repository};
@@ -122,7 +122,7 @@ async fn search_archives(
     repo: &borg_core::repository::Repository,
     query: &SearchQuery,
 ) -> Result<Vec<SearchResult>> {
-    let extractor = ArchiveExtractor::new(repo);
+    let extractor = ArchiveRestorer::new(repo);
     let manifest = repo.load_manifest().await?;
     let mut results = Vec::new();
 

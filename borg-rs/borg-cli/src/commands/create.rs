@@ -7,7 +7,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use tracing::info;
 
 use borg_core::{
-    archive::{ArchiveCreator, BackupProgress},
+    archive::{default_archive_unique_name, ArchiveCreator, BackupProgress},
     compression::{CompressionAlgorithm, CompressionConfig, CompressionLevel, Compressor},
     exclusion::{ExclusionList, ExclusionPattern},
 };
@@ -42,7 +42,9 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
 
     let start_time = Instant::now();
 
-    info!("Creating archive '{}' in repository {}", args.archive, repo_path);
+    let archive_name = args.archive.clone().unwrap_or_else(default_archive_unique_name);
+
+    info!("Creating archive '{}' in repository {}", archive_name, repo_path);
 
     // Validate paths exist
     for path in &args.paths {
@@ -82,6 +84,11 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
     let mut creator = ArchiveCreator::new(&mut repo)
         .with_exclusions(exclusion_matcher);
 
+    // Apply forced chunker profile if provided
+    if let Some(profile) = args.force_chunk_profile {
+        creator = creator.with_forced_chunker_profile(profile);
+    }
+
     // Set progress handler if enabled
     if let Some((pb, total)) = &progress {
         let cli_progress = CliProgress {
@@ -98,7 +105,7 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
         return Ok(());
     }
 
-    let archive = creator.create(&args.archive, &args.paths, args.comment.clone()).await
+    let archive = creator.create(&archive_name, &args.paths, args.comment.clone(), args.tags.clone()).await
         .map_err(|e| anyhow::anyhow!("Failed to create archive: {}", e))?;
 
     // Finish progress bar
@@ -109,7 +116,7 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
 
     let duration = start_time.elapsed();
 
-    println!("Archive: {}", args.archive);
+    println!("Archive: {}", archive_name);
     println!("Status: Success");
     println!("Files: {}", archive.stats.nfiles);
     println!("Directories: {}", archive.stats.ndirs);
@@ -122,7 +129,7 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
     // Print statistics if requested
     if args.stats {
         println!();
-        println!("Archive: {}", args.archive);
+        println!("Archive: {}", archive_name);
         println!("Duration: {}", format_duration(duration.as_secs_f64()));
         println!();
         println!("                       Original size      Compressed size    Deduplicated size");

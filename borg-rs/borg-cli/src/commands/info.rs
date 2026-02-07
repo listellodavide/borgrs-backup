@@ -4,7 +4,7 @@ use anyhow::Result;
 use super::{get_repo_path, open_repository};
 use crate::{Cli, InfoArgs};
 
-use borg_core::archive::ArchiveExtractor;
+use borg_core::archive::ArchiveRestorer;
 
 pub async fn run(cli: &Cli, args: &InfoArgs) -> Result<()> {
     let repo_path = get_repo_path(cli)?;
@@ -12,8 +12,8 @@ pub async fn run(cli: &Cli, args: &InfoArgs) -> Result<()> {
 
     match &args.archive {
         Some(archive_name) => {
-            let extractor = ArchiveExtractor::new(&repo);
-            let archive = extractor.load_archive(archive_name).await?;
+            let restorer = ArchiveRestorer::new(&repo);
+            let archive = restorer.load_archive(archive_name).await?;
             
             println!("Archive: {}", archive.metadata.name);
             println!("Time: {}", archive.metadata.time);

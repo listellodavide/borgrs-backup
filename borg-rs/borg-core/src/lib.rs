@@ -18,6 +18,7 @@ pub mod webdav;
 pub mod error;
 pub mod verification;
 pub mod metadata;
+pub mod recovery;
 
 pub use error::{BorgError, Result};
 

@@ -22,8 +22,6 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 const KEY_SIZE: usize = 32;
 /// Size of the nonce/IV in bytes (96 bits for AES-GCM)
 const NONCE_SIZE: usize = 12;
-/// Size of the authentication tag in bytes
-const TAG_SIZE: usize = 16;
 /// Size of the HMAC key in bytes
 const HMAC_KEY_SIZE: usize = 32;
 

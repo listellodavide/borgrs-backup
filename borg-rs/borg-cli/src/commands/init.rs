@@ -6,6 +6,7 @@ use tracing::info;
 use borg_core::{
     repository::{Repository, RepoDescriptor},
     storage::{parse_storage_config, build_operator, StorageConfig},
+    recovery::RecoveryProfile,
 };
 
 use super::get_passphrase;
@@ -79,6 +80,15 @@ pub async fn run(cli: &Cli, args: &InitArgs) -> Result<()> {
 
     let mut descriptor = RepoDescriptor::default();
     descriptor.encrypted = encrypted;
+
+    if let Some(percent) = args.recovery_set {
+        descriptor.recovery_profile = match percent {
+            7 => Some(RecoveryProfile::Low),
+            13 => Some(RecoveryProfile::Medium),
+            25 => Some(RecoveryProfile::High),
+            _ => anyhow::bail!("Invalid recovery set percentage. Allowed: 7, 13, 25"),
+        };
+    }
 
     let op = build_operator(storage_config)?;
     let _repo = Repository::init(

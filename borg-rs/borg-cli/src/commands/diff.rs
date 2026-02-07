@@ -6,7 +6,7 @@
 //! - Modified files (changed size, time, or content)
 
 use anyhow::Result;
-use borg_core::archive::{Archive, ArchiveExtractor, ArchiveItem, ItemType};
+use borg_core::archive::{Archive, ArchiveRestorer, ArchiveItem, ItemType};
 use borg_core::catalog::{ArchiveDiff, ChangeType, DiffEntry};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ pub async fn run(cli: &Cli, args: &DiffArgs) -> Result<()> {
     let repo = open_repository(&repo_path).await?;
 
     // Load both archives
-    let extractor = ArchiveExtractor::new(&repo);
+    let extractor = ArchiveRestorer::new(&repo);
     
     let archive1 = extractor.load_archive(&args.archive1).await?;
     let archive2 = extractor.load_archive(&args.archive2).await?;

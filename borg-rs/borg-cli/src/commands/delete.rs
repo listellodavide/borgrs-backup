@@ -16,7 +16,7 @@ pub async fn run(cli: &Cli, args: &DeleteArgs) -> Result<()> {
             // In the new architecture, deleting an archive means deleting its snapshot
             // We need to find the snapshot ID for the archive name first
             let manifest = repo.load_manifest().await?;
-            if let Some(archive_ref) = manifest.archives.iter().find(|a| a.name == *archive) {
+            if let Some(_archive_ref) = manifest.archives.iter().find(|a| a.name == *archive) {
                 // We need to find the snapshot ID corresponding to this archive.
                 // The manifest is constructed from snapshots, but ArchiveRef doesn't store the snapshot ID directly,
                 // it stores the root_tree ID.

@@ -811,6 +811,7 @@ mod tests {
                 username: "user".to_string(),
                 cmdline: vec![],
                 comment: None,
+                tags: None,
             },
             items,
             stats: ArchiveStats::default(),

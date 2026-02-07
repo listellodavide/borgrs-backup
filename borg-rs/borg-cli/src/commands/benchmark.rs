@@ -3,6 +3,7 @@
 use std::time::Instant;
 use anyhow::{Context, Result};
 use crate::{Cli, BenchmarkArgs, BenchmarkCommands};
+use borg_core::chunker::{Chunker, ChunkerConfig, ChunkerProfile};
 
 pub async fn run(_cli: &Cli, args: &BenchmarkArgs) -> Result<()> {
     match &args.command {
@@ -73,15 +74,16 @@ async fn benchmark_chunking(file: &std::path::Path) -> Result<()> {
         .context("Failed to read file")?;
     
     println!("File size: {} bytes", data.len());
-    
-    // Benchmark different chunking algorithms
-    use borg_core::chunker::{Chunker, ChunkerConfig};
-    
-    for (name, config) in [
-        ("Default (1MB avg)", ChunkerConfig::default()),
-        ("Small files (64KB avg)", ChunkerConfig::small_files()),
-        ("Large files (4MB avg)", ChunkerConfig::large_files()),
+
+    // Benchmark different chunking profiles
+    for (name, profile) in [
+        ("1MB Profile", ChunkerProfile::Size1M),
+        ("4MB Profile", ChunkerProfile::Size4M),
+        ("8MB Profile", ChunkerProfile::Size8M),
+        ("16MB Profile", ChunkerProfile::Size16M),
+        ("32MB Profile", ChunkerProfile::Size32M),
     ] {
+        let config = ChunkerConfig::from_profile(profile);
         let chunker = Chunker::new(config).expect("failed to create chunker");
         let start = Instant::now();
         let chunks = chunker.chunk_data(&data);

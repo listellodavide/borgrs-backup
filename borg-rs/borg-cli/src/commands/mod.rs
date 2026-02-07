@@ -2,7 +2,7 @@
 
 pub mod init;
 pub mod create;
-pub mod extract;
+pub mod restore;
 pub mod list;
 pub mod info;
 pub mod delete;

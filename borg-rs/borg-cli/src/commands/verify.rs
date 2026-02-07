@@ -256,14 +256,14 @@ async fn run_restore_test(
     archive_name: &str,
     sample_count: Option<usize>,
 ) -> Result<RestoreTestReport> {
-    use borg_core::archive::ArchiveExtractor;
+    use borg_core::archive::ArchiveRestorer;
     use tempfile::TempDir;
 
     let start = std::time::Instant::now();
-    let extractor = ArchiveExtractor::new(repo);
+    let restorer = ArchiveRestorer::new(repo);
     
     // Load archive
-    let archive = extractor.load_archive(archive_name).await
+    let archive = restorer.load_archive(archive_name).await
         .context("Failed to load archive")?;
 
     let sample_count = sample_count.unwrap_or(10);
@@ -272,7 +272,7 @@ async fn run_restore_test(
     let mut bytes_restored = 0u64;
     let mut errors = Vec::new();
 
-    // Create temporary directory for restore test
+    // Create a temporary directory for restore test
     let temp_dir = TempDir::new()
         .context("Failed to create temp directory")?;
 

@@ -1,12 +1,12 @@
-//! Archive extraction command
+//! Archive restoration command
 
 use anyhow::Result;
 use super::{get_repo_path, open_repository};
-use crate::{Cli, ExtractArgs};
+use crate::{Cli, RestoreArgs};
 
-use borg_core::archive::ArchiveExtractor;
+use borg_core::archive::ArchiveRestorer;
 
-pub async fn run(cli: &Cli, args: &ExtractArgs) -> Result<()> {
+pub async fn run(cli: &Cli, args: &RestoreArgs) -> Result<()> {
     let repo_path_raw = get_repo_path(cli)?;
 
     // Normalize WebDAV URL if credentials are provided (either from CLI or if it's a remote repo)
@@ -32,22 +32,22 @@ pub async fn run(cli: &Cli, args: &ExtractArgs) -> Result<()> {
 
     let repo = open_repository(&repo_path).await?;
 
-    let extractor = ArchiveExtractor::new(&repo);
+    let restorer = ArchiveRestorer::new(&repo);
 
-    // If paths are specified, use extract_paths, otherwise extract everything
+    // If paths are specified, use restore_paths, otherwise restore everything
     let stats = if args.paths.is_empty() {
-        extractor.extract(&args.archive, &args.destination).await?
+        restorer.restore(&args.archive, &args.destination).await?
     } else {
-        extractor.extract_paths(&args.archive, &args.destination, &args.paths).await?
+        restorer.restore_paths(&args.archive, &args.destination, &args.paths).await?
     };
 
-    println!("Extracted archive: {}", args.archive);
+    println!("Restored archive: {}", args.archive);
     if !args.paths.is_empty() {
         println!("Paths requested: {}", args.paths.len());
     }
-    println!("Files: {}", stats.files_extracted);
-    println!("Directories: {}", stats.dirs_extracted);
-    println!("Total bytes: {}", stats.bytes_extracted);
+    println!("Files: {}", stats.files_restored);
+    println!("Directories: {}", stats.dirs_restored);
+    println!("Total bytes: {}", stats.bytes_restored);
 
     Ok(())
 }
