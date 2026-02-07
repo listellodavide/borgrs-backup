@@ -330,25 +330,8 @@ impl<'a> ArchiveCreator<'a> {
             stats,
         };
 
-        // Store archive metadata as a chunk
-        let archive_data = bincode::serialize(&archive)
-            .map_err(|e| BorgError::Serialization(e.to_string()))?;
-        let archive_chunk = Chunk::new(archive_data);
-        let archive_id = archive_chunk.id.clone();
-        let _ = self.repo.put_chunk(&archive_chunk).await?;
-
-        // Update manifest
-        let mut manifest = self.repo.load_manifest().await?;
-        manifest.archives.push(ArchiveRef {
-            name: name.to_string(),
-            id: archive_id,
-            time: archive.metadata.time,
-        });
-        manifest.timestamp = chrono::Utc::now();
-        self.repo.save_manifest(&manifest).await?;
-
-        // Commit changes
-        self.repo.commit().await?;
+        // Commit the archive using the new repository method
+        self.repo.commit_archive(archive.clone()).await?;
 
         info!(
             "Archive '{}' created: {} files, {} dirs, {} bytes",
@@ -531,6 +514,104 @@ impl<'a> ArchiveExtractor<'a> {
 
         // Sort items to ensure directories are created before their contents
         let mut items = archive.items.clone();
+        items.sort_by(|a, b| a.path.cmp(&b.path));
+
+        // First pass: Extract directories, files, and symlinks
+        for item in &items {
+            if item.item_type == ItemType::Hardlink {
+                continue;
+            }
+
+            let target_path = dest.join(&item.path);
+
+            match item.item_type {
+                ItemType::Directory => {
+                    fs::create_dir_all(&target_path)?;
+                    self.restore_attributes(&target_path, &item.attrs)?;
+                    stats.dirs_extracted += 1;
+                }
+                ItemType::File => {
+                    if let Some(parent) = target_path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+
+                    // Reconstruct file from chunks
+                    let mut file_data = Vec::new();
+                    for chunk_id in &item.chunks {
+                        let chunk = self.repo.get_chunk(chunk_id).await?;
+                        file_data.extend_from_slice(&chunk.data);
+                    }
+
+                    fs::write(&target_path, &file_data)?;
+                    self.restore_attributes(&target_path, &item.attrs)?;
+                    stats.files_extracted += 1;
+                    stats.bytes_extracted += file_data.len() as u64;
+                }
+                ItemType::Symlink => {
+                    if let Some(target) = &item.symlink_target {
+                        if let Some(parent) = target_path.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        #[cfg(unix)]
+                        std::os::unix::fs::symlink(target, &target_path)?;
+                        stats.symlinks_extracted += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Second pass: Extract hardlinks
+        for item in &items {
+            if item.item_type == ItemType::Hardlink {
+                let target_path = dest.join(&item.path);
+                if let Some(link_target) = &item.hardlink_target {
+                    let link_source = dest.join(link_target);
+                    if let Some(parent) = target_path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    // Ensure the source exists before linking
+                    if link_source.exists() {
+                        std::fs::hard_link(&link_source, &target_path)?;
+                        stats.hardlinks_extracted += 1;
+                    } else {
+                        warn!("Hardlink source not found: {}", link_source.display());
+                    }
+                }
+            }
+        }
+
+        info!(
+            "Extracted {} files, {} dirs, {} bytes",
+            stats.files_extracted, stats.dirs_extracted, stats.bytes_extracted
+        );
+
+        Ok(stats)
+    }
+
+    /// Extract specific paths from an archive to a destination
+    #[instrument(skip(self, paths))]
+    pub async fn extract_paths(&self, archive_name: &str, dest: &Path, paths: &[PathBuf]) -> Result<ExtractStats> {
+        info!("Extracting {} paths from archive '{}' to {}", paths.len(), archive_name, dest.display());
+
+        let archive = self.load_archive(archive_name).await?;
+        let mut stats = ExtractStats::default();
+
+        fs::create_dir_all(dest)?;
+
+        // Filter items based on requested paths
+        // If paths is empty, extract everything (default behavior)
+        // Otherwise, only extract items that match one of the requested paths
+        let items: Vec<_> = if paths.is_empty() {
+            archive.items.clone()
+        } else {
+            archive.items.into_iter().filter(|item| {
+                paths.iter().any(|req_path| item.path == *req_path || item.path.starts_with(req_path))
+            }).collect()
+        };
+
+        // Sort items to ensure directories are created before their contents
+        let mut items = items;
         items.sort_by(|a, b| a.path.cmp(&b.path));
 
         // First pass: Extract directories, files, and symlinks

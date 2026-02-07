@@ -92,7 +92,7 @@ toml = "0.8"
 directories = "6.0"
 
 # OpenDAL for native storage backends
-opendal = { version = "0.50", features = ["services-webdav", "services-fs"] }
+opendal = { version = "0.50", features = ["services-webdav", "services-fs", "services-s3"] }
 
 # Testing
 tempfile = "3.14"

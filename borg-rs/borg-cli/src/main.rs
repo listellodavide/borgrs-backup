@@ -30,6 +30,18 @@ struct Cli {
     #[arg(long, value_name = "URL", global = true, conflicts_with_all = ["repo", "local_repo"])]
     remote_repo: Option<String>,
 
+    /// S3 access key (overrides embedded or env credentials)
+    #[arg(long, value_name = "KEY", env = "S3_ACCESS_KEY", global = true)]
+    s3_access_key: Option<String>,
+
+    /// S3 secret key (overrides embedded or env credentials)
+    #[arg(long, value_name = "SECRET", env = "S3_SECRET_KEY", global = true)]
+    s3_secret_key: Option<String>,
+
+    /// S3 session token (optional, for temporary credentials)
+    #[arg(long, value_name = "TOKEN", env = "S3_SESSION_TOKEN", global = true)]
+    s3_session_token: Option<String>,
+
     /// Log level (trace, debug, info, warn, error)
     #[arg(long, default_value = "warn", global = true)]
     log_level: String,
@@ -668,6 +680,20 @@ enum BenchmarkCommands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // If S3 credentials were passed on CLI, export them to environment so storage builder
+    // (and underlying SDKs) can pick them up when building S3 operators.
+    if let Some(ak) = &cli.s3_access_key {
+        std::env::set_var("S3_ACCESS_KEY", ak);
+    }
+    if let Some(sk) = &cli.s3_secret_key {
+        std::env::set_var("S3_SECRET_KEY", sk);
+    }
+    if let Some(tok) = &cli.s3_session_token {
+        std::env::set_var("S3_SESSION_TOKEN", tok);
+        // Also set AWS_SESSION_TOKEN for libraries that read standard AWS env vars
+        std::env::set_var("AWS_SESSION_TOKEN", tok);
+    }
 
     // Initialize logging
     let filter = EnvFilter::try_from_default_env()

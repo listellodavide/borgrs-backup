@@ -145,7 +145,7 @@ async fn list_archive_contents(
 
     // Output
     if args.json {
-        print_items_json(&items)?;
+        print_items_json(&items, archive_name, archive.metadata.time)?;
     } else if args.short {
         for item in &items {
             println!("{}", item.path.display());
@@ -203,7 +203,7 @@ fn print_archives_table(archives: &[&ArchiveRef]) {
 }
 
 /// Print archive items in JSON format
-fn print_items_json(items: &[&ArchiveItem]) -> Result<()> {
+fn print_items_json(items: &[&ArchiveItem], archive_name: &str, archive_time: chrono::DateTime<chrono::Utc>) -> Result<()> {
     #[derive(Serialize)]
     struct ItemJson {
         path: String,
@@ -214,6 +214,8 @@ fn print_items_json(items: &[&ArchiveItem]) -> Result<()> {
         uid: u32,
         gid: u32,
         mtime: i64,
+        archive: String,
+        archive_time: String,
     }
 
     let json_items: Vec<_> = items
@@ -226,6 +228,8 @@ fn print_items_json(items: &[&ArchiveItem]) -> Result<()> {
             uid: item.attrs.uid,
             gid: item.attrs.gid,
             mtime: item.attrs.mtime,
+            archive: archive_name.to_string(),
+            archive_time: archive_time.to_rfc3339(),
         })
         .collect();
 

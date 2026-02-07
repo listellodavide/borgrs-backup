@@ -17,6 +17,7 @@ pub mod storage;
 pub mod webdav;
 pub mod error;
 pub mod verification;
+pub mod metadata;
 
 pub use error::{BorgError, Result};
 
@@ -25,7 +26,7 @@ pub mod prelude {
     pub use crate::chunker::{Chunker, ChunkerConfig, Chunk};
     pub use crate::compression::{Compressor, CompressionAlgorithm};
     pub use crate::crypto::{CryptoProvider, EncryptionKey};
-    pub use crate::repository::{Repository, RepositoryConfig};
+    pub use crate::repository::{Repository, RepoDescriptor};
     pub use crate::archive::{Archive, ArchiveItem};
     pub use crate::exclusion::ExclusionList;
     pub use crate::verification::{

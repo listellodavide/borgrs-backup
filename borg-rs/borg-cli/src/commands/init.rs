@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use tracing::info;
 
 use borg_core::{
-    repository::{Repository, RepositoryConfig},
+    repository::{Repository, RepoDescriptor},
     storage::{parse_storage_config, build_operator, StorageConfig},
 };
 
@@ -25,7 +25,20 @@ pub async fn run(cli: &Cli, args: &InitArgs) -> Result<()> {
             raw_repo
         }
     };
-    let storage_config = parse_storage_config(&repo_str)?;
+    let mut storage_config = parse_storage_config(&repo_str)?;
+
+    // Inject S3 credentials from CLI args if present
+    if let StorageConfig::S3 { access_key, secret_key, session_token, .. } = &mut storage_config {
+        if let Some(ak) = &cli.s3_access_key {
+            *access_key = Some(ak.clone());
+        }
+        if let Some(sk) = &cli.s3_secret_key {
+            *secret_key = Some(sk.clone());
+        }
+        if let Some(tok) = &cli.s3_session_token {
+            *session_token = Some(tok.clone());
+        }
+    }
 
     // Parse encryption mode (simplified for now)
     let encrypted = match args.encryption.as_str() {
@@ -64,15 +77,15 @@ pub async fn run(cli: &Cli, args: &InitArgs) -> Result<()> {
     // Initialize repository
     info!("Initializing repository at {}", repo_str);
 
-    let mut config = RepositoryConfig::default();
-    config.encrypted = encrypted;
+    let mut descriptor = RepoDescriptor::default();
+    descriptor.encrypted = encrypted;
 
     let op = build_operator(storage_config)?;
     let _repo = Repository::init(
         op,
         repo_str.clone(),
         passphrase.as_deref(),
-        Some(config)
+        Some(descriptor)
     ).await.context("Failed to initialize repository")?;
 
     println!("Initialized repository at {}", repo_str);

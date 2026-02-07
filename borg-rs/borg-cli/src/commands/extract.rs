@@ -33,9 +33,18 @@ pub async fn run(cli: &Cli, args: &ExtractArgs) -> Result<()> {
     let repo = open_repository(&repo_path).await?;
 
     let extractor = ArchiveExtractor::new(&repo);
-    let stats = extractor.extract(&args.archive, &args.destination).await?;
+
+    // If paths are specified, use extract_paths, otherwise extract everything
+    let stats = if args.paths.is_empty() {
+        extractor.extract(&args.archive, &args.destination).await?
+    } else {
+        extractor.extract_paths(&args.archive, &args.destination, &args.paths).await?
+    };
 
     println!("Extracted archive: {}", args.archive);
+    if !args.paths.is_empty() {
+        println!("Paths requested: {}", args.paths.len());
+    }
     println!("Files: {}", stats.files_extracted);
     println!("Directories: {}", stats.dirs_extracted);
     println!("Total bytes: {}", stats.bytes_extracted);

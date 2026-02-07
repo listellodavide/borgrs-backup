@@ -27,9 +27,11 @@ pub async fn run(cli: &Cli, args: &InfoArgs) -> Result<()> {
         }
         None => {
             let manifest = repo.load_manifest().await?;
-            println!("Repository ID: {}", manifest.repository_id);
+            let descriptor = repo.descriptor();
+
+            println!("Repository ID: {}", descriptor.id);
             println!("Location: {}", repo_path);
-            println!("Encrypted: {}", repo.config().encrypted);
+            println!("Encrypted: {}", descriptor.encrypted);
             println!("Archives: {}", manifest.archives.len());
         }
     }
