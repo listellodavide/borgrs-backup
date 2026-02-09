@@ -1,0 +1,23 @@
+# PKGBUILD
+pkgname=borg-gui
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="High-performance backup solution (GUI)"
+arch=('x86_64')
+url="https://github.com/borg-rust/borg-rust"
+license=('AdiwaveLicense')
+depends=('slint' 'openssl')
+makedepends=('cargo')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/borg-rust/borg-rust/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/borg-rust-$pkgver"
+  cargo build --release -p borg-gui
+}
+
+package() {
+  cd "$srcdir/borg-rust-$pkgver"
+  install -Dm755 "target/release/borg-gui" "$pkgdir/usr/bin/borg-gui"
+  install -Dm644 "borg-gui/assets/borg-gui.desktop" "$pkgdir/usr/share/applications/borg-gui.desktop"
+}

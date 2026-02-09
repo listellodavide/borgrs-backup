@@ -1,0 +1,211 @@
+import { Button, LineEdit, CheckBox, VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
+import { NewArchiveWizardLogic } from "globals.slint";
+import { Theme } from "theme.slint";
+
+component WizardStepLabel inherits Text {
+    in property <bool> active;
+    in property <bool> completed;
+    color: active ? Theme.primary : (completed ? Theme.primary : Theme.text-muted);
+    font-size: 14px;
+    font-weight: active ? 700 : 400;
+}
+
+export component NewArchiveWizardView inherits Rectangle {
+    background: Theme.background;
+    border-radius: 8px;
+
+    HorizontalLayout {
+        // --- Left Stepper ---
+        Rectangle {
+            width: 200px;
+            background: Theme.surface;
+            border-top-left-radius: 8px;
+            border-bottom-left-radius: 8px;
+
+            VerticalLayout {
+                padding: 25px;
+                spacing: 25px;
+                Text { text: "NEW ARCHIVE"; font-size: 12px; color: Theme.text-muted; font-weight: 800; }
+                WizardStepLabel { text: "1. Backup Paths"; active: NewArchiveWizardLogic.current_step == 0; completed: NewArchiveWizardLogic.current_step > 0; }
+                WizardStepLabel { text: "2. Settings"; active: NewArchiveWizardLogic.current_step == 1; completed: NewArchiveWizardLogic.current_step > 1; }
+                WizardStepLabel { text: "3. Metadata"; active: NewArchiveWizardLogic.current_step == 2; completed: NewArchiveWizardLogic.current_step > 2; }
+                WizardStepLabel { text: "4. Review"; active: NewArchiveWizardLogic.current_step == 3; }
+                Rectangle {} // Spacer
+            }
+        }
+
+        // --- Right Content Area ---
+        VerticalLayout {
+            padding: 40px;
+            spacing: 25px;
+
+            // Step 0: Backup Paths
+            if (NewArchiveWizardLogic.current_step == 0) : VerticalLayout {
+                spacing: 20px;
+                Text { text: "What should be backed up?"; font-size: 22px; color: Theme.text; font-weight: 700; }
+                
+                Text { text: "Select folder(s) to include in this archive."; color: Theme.text-muted; }
+
+                ScrollView {
+                    height: 200px;
+                    VerticalLayout {
+                        spacing: 10px;
+                        for path[i] in NewArchiveWizardLogic.backup_paths : Rectangle {
+                            height: 40px;
+                            background: Theme.surface;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding-left: 10px; padding-right: 10px;
+                                spacing: 10px;
+                                Text { text: "📁"; vertical-alignment: center; }
+                                Text { text: path; vertical-alignment: center; color: Theme.text; }
+                                Rectangle {} // Spacer
+                                Button {
+                                    text: "Remove";
+                                    clicked => { NewArchiveWizardLogic.remove_path(i) }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        text: "+ Add Folder Path";
+                        clicked => { NewArchiveWizardLogic.add_path() }
+                    }
+                }
+            }
+
+            // Step 1: Settings
+            if (NewArchiveWizardLogic.current_step == 1) : VerticalLayout {
+                spacing: 20px;
+                Text { text: "Archive Settings"; font-size: 22px; color: Theme.text; font-weight: 700; }
+                
+                VerticalLayout {
+                    spacing: 8px;
+                    Text { text: "Compression Level"; color: Theme.text-muted; font-size: 14px; }
+                    LineEdit { 
+                        text <=> NewArchiveWizardLogic.compression_level; 
+                        placeholder-text: "e.g. zstd,3 or lz4"; 
+                    }
+                    Text { text: "Common values: none, lz4, zstd,1..22, zlib,0..9"; font-size: 10px; color: Theme.text-muted; }
+                }
+
+                VerticalLayout {
+                    spacing: 8px;
+                    Text { text: "Data Redundancy"; color: Theme.text-muted; font-size: 14px; }
+                    LineEdit { 
+                        text <=> NewArchiveWizardLogic.redundancy; 
+                        placeholder-text: "e.g. none"; 
+                    }
+                }
+            }
+
+            // Step 2: Metadata
+            if (NewArchiveWizardLogic.current_step == 2) : VerticalLayout {
+                spacing: 20px;
+                Text { text: "Archive Metadata"; font-size: 22px; color: Theme.text; font-weight: 700; }
+                
+                VerticalLayout {
+                    spacing: 8px;
+                    CheckBox {
+                        text: "Use custom archive name";
+                        checked <=> NewArchiveWizardLogic.use_custom_name;
+                    }
+                    if (NewArchiveWizardLogic.use_custom_name) : LineEdit { 
+                        text <=> NewArchiveWizardLogic.archive_name; 
+                        placeholder-text: "e.g. daily-backup"; 
+                    }
+                    if (!NewArchiveWizardLogic.use_custom_name) : Rectangle {
+                        height: 35px;
+                        background: Theme.surface;
+                        border-radius: 4px;
+                        Text {
+                            padding-left: 10px;
+                            text: "backup_managed_name (auto-generated)";
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 8px;
+                    Text { text: "Comment"; color: Theme.text-muted; font-size: 14px; }
+                    LineEdit { 
+                        text <=> NewArchiveWizardLogic.comment; 
+                        placeholder-text: "Optional description"; 
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 8px;
+                    Text { text: "Tags"; color: Theme.text-muted; font-size: 14px; }
+                    LineEdit { 
+                        text <=> NewArchiveWizardLogic.tags; 
+                        placeholder-text: "e.g. work, important (comma separated)"; 
+                    }
+                }
+            }
+
+            // Step 3: Review
+            if (NewArchiveWizardLogic.current_step == 3) : VerticalLayout {
+                spacing: 20px;
+                Text { text: "Review Archive Creation"; font-size: 22px; color: Theme.text; font-weight: 700; }
+                
+                Rectangle {
+                    background: Theme.surface;
+                    border-radius: 8px;
+                    VerticalLayout {
+                        padding: 20px;
+                        spacing: 12px;
+                        HorizontalLayout {
+                            Text { text: "Name:"; width: 100px; color: Theme.text-muted; }
+                            Text { 
+                                text: NewArchiveWizardLogic.use_custom_name ? NewArchiveWizardLogic.archive_name : "backup_managed_name"; 
+                                color: Theme.primary; 
+                                font-weight: 700; 
+                            }
+                        }
+                        HorizontalLayout {
+                            Text { text: "Paths:"; width: 100px; color: Theme.text-muted; }
+                            Text { text: NewArchiveWizardLogic.backup_paths.length + " folders selected"; color: Theme.text; }
+                        }
+                        HorizontalLayout {
+                            Text { text: "Compression:"; width: 100px; color: Theme.text-muted; }
+                            Text { text: NewArchiveWizardLogic.compression_level; color: Theme.text; }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {} // Spacer
+
+            // --- Footer Navigation ---
+            HorizontalLayout {
+                spacing: 15px;
+                alignment: end;
+                Button {
+                    text: "Cancel";
+                    clicked => { NewArchiveWizardLogic.cancel() }
+                }
+                if (NewArchiveWizardLogic.current_step > 0) : Button {
+                    text: "Back";
+                    clicked => { NewArchiveWizardLogic.back() }
+                }
+                if (NewArchiveWizardLogic.current_step < 3) : Button {
+                    text: "Next";
+                    primary: true;
+                    clicked => { NewArchiveWizardLogic.next() }
+                }
+                if (NewArchiveWizardLogic.current_step == 3) : Button {
+                    text: "CREATE ARCHIVE";
+                    primary: true;
+                    clicked => { NewArchiveWizardLogic.finish() }
+                }
+            }
+        }
+    }
+}

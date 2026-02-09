@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Restore Archive - Borg Backup</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#137fec",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#101922",
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Manrope', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .ios-blur {
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        /* Custom scrollbar for dark theme */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #3b4754;
+            border-radius: 10px;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display transition-colors duration-300">
+<div class="relative flex h-screen max-w-md mx-auto flex-col bg-background-light dark:bg-background-dark overflow-hidden border-x border-slate-200 dark:border-slate-800">
+<!-- Top App Bar -->
+<header class="sticky top-0 z-20 flex items-center justify-between px-4 pt-12 pb-4 bg-background-light/80 dark:bg-background-dark/80 ios-blur border-b border-slate-200 dark:border-slate-800">
+<button class="flex items-center justify-center size-10 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-primary">arrow_back_ios</span>
+</button>
+<h1 class="text-lg font-bold tracking-tight">Restore Archive</h1>
+<button class="flex items-center justify-center size-10 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-slate-500">more_horiz</span>
+</button>
+</header>
+<!-- Content Area -->
+<main class="flex-1 overflow-y-auto px-4 py-6 space-y-6">
+<!-- Archive Selection -->
+<section class="space-y-3">
+<label class="block">
+<span class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">Select Archive</span>
+<div class="relative mt-2">
+<select class="w-full h-14 pl-4 pr-10 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl appearance-none focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-sm font-medium">
+<option value="daily-2023-11-20">daily-2023-11-20-103022 (Latest)</option>
+<option value="weekly-2023-11-15">weekly-2023-11-15-020000</option>
+<option value="monthly-2023-11-01">monthly-2023-11-01-000000</option>
+<option value="manual-2023-10-28">manual-pre-update-2023-10-28</option>
+</select>
+<span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">unfold_more</span>
+</div>
+</label>
+</section>
+<!-- File Browser -->
+<section class="space-y-3">
+<div class="flex items-center justify-between ml-1">
+<span class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Archive Contents</span>
+<button class="text-primary text-xs font-bold hover:underline">Select All</button>
+</div>
+<!-- Path Breadcrumbs -->
+<div class="flex items-center gap-1 overflow-x-auto no-scrollbar pb-1 text-xs font-mono bg-slate-100 dark:bg-slate-900/50 p-2 rounded-lg border border-slate-200 dark:border-slate-800/50">
+<span class="text-slate-400">root</span>
+<span class="material-symbols-outlined text-sm scale-75 text-slate-500">chevron_right</span>
+<span class="text-slate-400">home</span>
+<span class="material-symbols-outlined text-sm scale-75 text-slate-500">chevron_right</span>
+<span class="text-primary font-bold">user</span>
+</div>
+<!-- Virtual List -->
+<div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+<!-- Folder Item -->
+<label class="flex items-center p-4 gap-4 active:bg-slate-50 dark:active:bg-slate-800 transition-colors cursor-pointer">
+<input checked="" class="size-5 rounded border-slate-300 dark:border-slate-700 text-primary focus:ring-primary focus:ring-offset-0 bg-transparent" type="checkbox"/>
+<span class="material-symbols-outlined text-amber-500">folder</span>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-medium truncate">Documents</p>
+<p class="text-[10px] text-slate-400 uppercase font-bold tracking-tight">4.2 GB • Folder</p>
+</div>
+<span class="material-symbols-outlined text-slate-300 dark:text-slate-600">chevron_right</span>
+</label>
+<!-- File Item -->
+<label class="flex items-center p-4 gap-4 active:bg-slate-50 dark:active:bg-slate-800 transition-colors cursor-pointer">
+<input checked="" class="size-5 rounded border-slate-300 dark:border-slate-700 text-primary focus:ring-primary focus:ring-offset-0 bg-transparent" type="checkbox"/>
+<span class="material-symbols-outlined text-slate-400">description</span>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-medium truncate">config.yaml</p>
+<p class="text-[10px] text-slate-400 uppercase font-bold tracking-tight">2.4 KB • YAML</p>
+</div>
+</label>
+<!-- File Item -->
+<label class="flex items-center p-4 gap-4 active:bg-slate-50 dark:active:bg-slate-800 transition-colors cursor-pointer">
+<input class="size-5 rounded border-slate-300 dark:border-slate-700 text-primary focus:ring-primary focus:ring-offset-0 bg-transparent" type="checkbox"/>
+<span class="material-symbols-outlined text-indigo-400">image</span>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-medium truncate">profile_backup.jpg</p>
+<p class="text-[10px] text-slate-400 uppercase font-bold tracking-tight">12.8 MB • Image</p>
+</div>
+</label>
+<!-- File Item -->
+<label class="flex items-center p-4 gap-4 active:bg-slate-50 dark:active:bg-slate-800 transition-colors cursor-pointer">
+<input class="size-5 rounded border-slate-300 dark:border-slate-700 text-primary focus:ring-primary focus:ring-offset-0 bg-transparent" type="checkbox"/>
+<span class="material-symbols-outlined text-red-400">article</span>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-medium truncate">syslog.bak</p>
+<p class="text-[10px] text-slate-400 uppercase font-bold tracking-tight">512 KB • Log</p>
+</div>
+</label>
+</div>
+</section>
+<!-- Destination Picker -->
+<section class="space-y-3 pb-32">
+<label class="block">
+<span class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">Restore Destination</span>
+<div class="flex mt-2 items-stretch gap-2">
+<div class="flex-1 relative">
+<input class="w-full h-14 pl-10 pr-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-mono focus:ring-0 focus:border-slate-200 dark:focus:border-slate-800 cursor-default" readonly="" type="text" value="/home/user/restored_files"/>
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 scale-90">folder_open</span>
+</div>
+<button class="bg-primary/10 text-primary border border-primary/20 size-14 flex items-center justify-center rounded-xl active:scale-95 transition-transform">
+<span class="material-symbols-outlined">browse_gallery</span>
+</button>
+</div>
+</label>
+</section>
+</main>
+<!-- Bottom Action & Progress Area -->
+<footer class="absolute bottom-0 left-0 right-0 bg-white/90 dark:bg-slate-900/90 ios-blur border-t border-slate-200 dark:border-slate-800 p-4 pb-10 space-y-4">
+<!-- Progress Overlay (Visible during operation) -->
+<div class="p-3 bg-slate-100 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700/50">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm animate-spin" style="animation-duration: 3s;">sync</span>
+<span class="text-xs font-bold text-slate-600 dark:text-slate-300">Ready to restore</span>
+</div>
+<span class="text-xs font-mono text-slate-500">0%</span>
+</div>
+<div class="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-0 rounded-full transition-all duration-500"></div>
+</div>
+<p class="text-[10px] mt-2 text-slate-400 font-mono truncate">Waiting for user input...</p>
+</div>
+<!-- Start Button -->
+<button class="w-full h-14 bg-primary text-white rounded-xl font-bold text-lg shadow-lg shadow-primary/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+<span class="material-symbols-outlined">settings_backup_restore</span>
+                Start Restore
+            </button>
+</footer>
+</div>
+<!-- Background Pattern Decoration (Subtle) -->
+<div class="fixed inset-0 pointer-events-none -z-10 opacity-30">
+<div class="absolute top-[-10%] right-[-10%] size-96 bg-primary/10 rounded-full blur-3xl"></div>
+<div class="absolute bottom-[-10%] left-[-10%] size-96 bg-primary/5 rounded-full blur-3xl"></div>
+</div>
+</body></html>

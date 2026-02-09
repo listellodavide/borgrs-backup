@@ -207,6 +207,8 @@ pub struct ArchiveMetadata {
     pub tags: Option<Vec<String>>,
     /// Original paths backed up
     pub original_paths: Option<Vec<PathBuf>>,
+    /// Path mapping for restoration (target -> source_root)
+    pub path_mapping: Option<HashMap<PathBuf, PathBuf>>,
     /// Compression configuration used for this archive
     pub compression: Option<CompressionConfig>,
 }
@@ -321,9 +323,22 @@ impl<'a> ArchiveCreator<'a> {
     /// Create an archive from a list of paths
     #[instrument(skip(self, paths, name))]
     pub async fn create(
+        self,
+        name: &str,
+        paths: &[PathBuf],
+        comment: Option<String>,
+        tags: Option<Vec<String>>,
+    ) -> Result<Archive> {
+        self.create_with_mapping(name, paths, None, comment, tags).await
+    }
+
+    /// Create an archive from a list of paths with optional mapping
+    #[instrument(skip(self, paths, name, mapping))]
+    pub async fn create_with_mapping(
         mut self,
         name: &str,
         paths: &[PathBuf],
+        mapping: Option<HashMap<PathBuf, PathBuf>>,
         comment: Option<String>,
         tags: Option<Vec<String>>,
     ) -> Result<Archive> {
@@ -352,15 +367,32 @@ impl<'a> ArchiveCreator<'a> {
             comment,
             tags,
             original_paths: Some(paths.to_vec()),
+            path_mapping: mapping,
             compression: self.compression_config.clone(),
         };
 
         let mut items = Vec::new();
         let mut stats = ArchiveStats::default();
 
+        // Calculate total size for progress reporting
+        let mut total_size = 0;
+        for path in paths {
+            for entry in WalkDir::new(path).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+                let relative_path = entry.path().strip_prefix(path).unwrap_or(entry.path());
+                if !self.exclusions.is_excluded(relative_path, entry.file_type().is_dir()) {
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.is_file() {
+                            total_size += meta.len();
+                        }
+                    }
+                }
+            }
+        }
+        self.progress.on_progress(0, total_size);
+
         // Process each path
         for path in paths {
-            self.process_path(path, path, &mut items, &mut stats).await?;
+            self.process_path(path, path, &mut items, &mut stats, total_size).await?;
         }
 
         let archive = Archive {
@@ -387,6 +419,7 @@ impl<'a> ArchiveCreator<'a> {
         path: &Path,
         items: &mut Vec<ArchiveItem>,
         stats: &mut ArchiveStats,
+        total_size: u64,
     ) -> Result<()> {
         // Walk the directory tree and collect entries that are not excluded
         let entries: Vec<_> = WalkDir::new(path)
@@ -436,7 +469,7 @@ impl<'a> ArchiveCreator<'a> {
                 }
             };
 
-            let item = self.process_entry(entry_path, relative_path, &meta, stats).await?;
+            let item = self.process_entry(entry_path, relative_path, &meta, stats, total_size).await?;
             if let Some(item) = item {
                 items.push(item);
             }
@@ -452,6 +485,7 @@ impl<'a> ArchiveCreator<'a> {
         relative_path: PathBuf,
         meta: &Metadata,
         stats: &mut ArchiveStats,
+        total_size: u64,
     ) -> Result<Option<ArchiveItem>> {
         let item_type = ItemType::from_metadata(meta);
 
@@ -519,6 +553,7 @@ impl<'a> ArchiveCreator<'a> {
 
                 stats.nfiles += 1;
                 stats.original_size += meta.len();
+                self.progress.on_progress(stats.original_size, total_size);
 
                 self.progress.on_file_complete(path, meta.len(), chunk_ids.len());
 
@@ -602,11 +637,23 @@ impl<'a> ArchiveRestorer<'a> {
         // Filter items based on requested paths
         let items: Vec<_> = if paths.is_empty() {
             archive.items.clone()
+        } else if paths.len() == 1 && paths[0].to_str() == Some("::defaults") {
+            // Use original paths if they exist
+            if let Some(orig_paths) = &archive.metadata.original_paths {
+                 archive.items.into_iter().filter(|item| {
+                    orig_paths.iter().any(|req_path| item.path == *req_path || item.path.starts_with(req_path))
+                }).collect()
+            } else {
+                archive.items.clone()
+            }
         } else {
             archive.items.into_iter().filter(|item| {
                 paths.iter().any(|req_path| item.path == *req_path || item.path.starts_with(req_path))
             }).collect()
         };
+
+        // Determine effective destination based on absolute path request
+        let is_absolute_restore = dest.is_absolute() && dest.to_str() != Some("/");
 
         // Calculate totals for progress bar
         let total_files = items.iter().filter(|i| i.item_type == ItemType::File).count() as u64;
@@ -623,7 +670,13 @@ impl<'a> ArchiveRestorer<'a> {
                 continue;
             }
 
-            let target_path = dest.join(&item.path);
+            let target_path = if is_absolute_restore {
+                // If dest is absolute, it becomes the new root /
+                // item.path is typically relative (or stripped prefix)
+                dest.join(&item.path)
+            } else {
+                dest.join(&item.path)
+            };
             
             match item.item_type {
                 ItemType::Directory => {
@@ -796,6 +849,7 @@ impl<'a> ArchiveRestorer<'a> {
                     comment: None,
                     tags: None,
                     original_paths: None,
+                    path_mapping: None,
                     compression: None,
                 },
                 items: v1.items.into_iter().map(convert_item).collect(),
@@ -994,6 +1048,7 @@ mod tests {
             comment: Some("test comment".to_string()),
             tags: Some(vec!["tag1".to_string(), "tag2".to_string()]),
             original_paths: Some(vec![PathBuf::from("/tmp/test")]),
+            path_mapping: None,
             compression: None,
         };
 

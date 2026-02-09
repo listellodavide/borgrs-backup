@@ -97,6 +97,8 @@ pub enum ChunkerProfile {
     Size16M,
     /// 32 MiB average chunk size
     Size32M,
+    /// 64 MiB average chunk size (Limit for FastCDC v2020)
+    Size64M,
 }
 
 impl FromStr for ChunkerProfile {
@@ -110,6 +112,7 @@ impl FromStr for ChunkerProfile {
             "8m" | "8mb" => Ok(Self::Size8M),
             "16m" | "16mb" => Ok(Self::Size16M),
             "32m" | "32mb" => Ok(Self::Size32M),
+            "64m" | "64mb" => Ok(Self::Size64M),
             _ => Err(crate::error::BorgError::InvalidArgument(format!("Unknown chunker profile: {}", s))),
         }
     }
@@ -124,6 +127,7 @@ impl std::fmt::Display for ChunkerProfile {
             Self::Size8M => "8mb",
             Self::Size16M => "16mb",
             Self::Size32M => "32mb",
+            Self::Size64M => "64mb",
         };
         write!(f, "{}", s)
     }
@@ -136,7 +140,8 @@ pub fn choose_profile_for_size(size_mb: u64) -> ChunkerProfile {
         s if s < 40 => ChunkerProfile::Size4M,
         s if s < 80 => ChunkerProfile::Size8M,
         s if s < 160 => ChunkerProfile::Size16M,
-        _ => ChunkerProfile::Size32M,
+        s if s < 320 => ChunkerProfile::Size32M,
+        _ => ChunkerProfile::Size64M,
     }
 }
 
@@ -186,16 +191,38 @@ impl ChunkerConfig {
             ChunkerProfile::Size32M => Self {
                 min_size: 8 * 1024 * 1024,     // 8 MiB
                 avg_size: 32 * 1024 * 1024,    // 32 MiB
-                max_size: 128 * 1024 * 1024,   // 128 MiB
+                max_size: 64 * 1024 * 1024,   // 64 MiB
+            },
+            ChunkerProfile::Size64M => Self {
+                min_size: 16 * 1024 * 1024,    // 16 MiB
+                avg_size: 64 * 1024 * 1024,    // 64 MiB
+                max_size: 64 * 1024 * 1024,    // 64 MiB (Limit)
             },
         }
     }
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<()> {
+        const MINIMUM_MAX: u32 = 64 * 1024 * 1024; // FastCDC v2020 limit
+
         if self.min_size == 0 {
             return Err(crate::error::BorgError::InvalidArgument(
                 "min_size must be greater than 0".to_string(),
+            ));
+        }
+        if self.min_size > MINIMUM_MAX {
+             return Err(crate::error::BorgError::InvalidArgument(
+                format!("min_size ({}) must be <= {} bytes (FastCDC v2020 limit)", self.min_size, MINIMUM_MAX),
+            ));
+        }
+        if self.avg_size > MINIMUM_MAX * 2 { // Some reasonable upper bound for avg
+             return Err(crate::error::BorgError::InvalidArgument(
+                format!("avg_size ({}) is too large", self.avg_size),
+            ));
+        }
+        if self.max_size > MINIMUM_MAX {
+             return Err(crate::error::BorgError::InvalidArgument(
+                format!("max_size ({}) must be <= {} bytes (FastCDC v2020 limit)", self.max_size, MINIMUM_MAX),
             ));
         }
         if self.avg_size < self.min_size {
@@ -203,7 +230,8 @@ impl ChunkerConfig {
                 "avg_size must be >= min_size".to_string(),
             ));
         }
-        if self.max_size < self.avg_size {
+        if self.max_size < self.avg_size && self.max_size < MINIMUM_MAX {
+            // max_size can be equal to avg_size if we are at the limit
             return Err(crate::error::BorgError::InvalidArgument(
                 "max_size must be >= avg_size".to_string(),
             ));
@@ -224,9 +252,18 @@ impl Chunker {
         Ok(Self { config })
     }
 
+    /// Create a chunker with default settings
+    pub fn with_defaults() -> Self {
+        Self::from_profile(ChunkerProfile::Default)
+    }
+
     /// Create a chunker for a specific profile
     pub fn from_profile(profile: ChunkerProfile) -> Self {
         let config = ChunkerConfig::from_profile(profile);
+        // We trust our profile definitions, but validate anyway to be sure
+        if let Err(e) = config.validate() {
+            panic!("Invalid chunker profile {}: {}", profile, e);
+        }
         Self { config }
     }
 
@@ -242,6 +279,8 @@ impl Chunker {
             return Vec::new();
         }
 
+        // FastCDC v2020 has specific limits. 
+        // We use a robust builder pattern or careful initialization.
         let chunker = FastCDC::new(
             data,
             self.config.min_size,
@@ -249,12 +288,14 @@ impl Chunker {
             self.config.max_size,
         );
 
-        let chunks: Vec<Chunk> = chunker
-            .map(|chunk_info| {
-                let chunk_data = data[chunk_info.offset..chunk_info.offset + chunk_info.length].to_vec();
-                Chunk::new(chunk_data)
-            })
-            .collect();
+        let mut chunks = Vec::new();
+        
+        // Wrap iteration in a way that we could catch issues if it was possible, 
+        // but here we just iterate. FastCDC::new already performed assertions in some versions.
+        for chunk_info in chunker {
+            let chunk_data = data[chunk_info.offset..chunk_info.offset + chunk_info.length].to_vec();
+            chunks.push(Chunk::new(chunk_data));
+        }
 
         debug!(
             "Chunked {} bytes into {} chunks",
@@ -270,6 +311,10 @@ impl Chunker {
     pub fn chunk_reader<R: Read>(&self, mut reader: R) -> Result<Vec<Chunk>> {
         let mut buffer = Vec::new();
         reader.read_to_end(&mut buffer)?;
+        
+        // FastCDC v2020 might panic in new() if params are invalid despite our validation.
+        // In the future, we could use catch_unwind if we want to be truly "nasa level" 
+        // but for now, we rely on the validated config.
         Ok(self.chunk_data(&buffer))
     }
 
@@ -426,6 +471,7 @@ mod tests {
         assert_eq!(choose_profile_for_size(30), ChunkerProfile::Size4M);
         assert_eq!(choose_profile_for_size(70), ChunkerProfile::Size8M);
         assert_eq!(choose_profile_for_size(150), ChunkerProfile::Size16M);
-        assert_eq!(choose_profile_for_size(200), ChunkerProfile::Size32M);
+        assert_eq!(choose_profile_for_size(300), ChunkerProfile::Size32M);
+        assert_eq!(choose_profile_for_size(1000), ChunkerProfile::Size64M);
     }
 }

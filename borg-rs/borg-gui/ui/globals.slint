@@ -1,26 +1,103 @@
+import { StandardListView } from "std-widgets.slint";
+
+// Shared data structures used across multiple UI components
 export struct RepoItem {
     name: string,
     path: string,
     repo_type: string, // "local", "s3", "sftp"
 }
 
+export struct ArchiveEntry {
+    name: string,
+    date: string,
+    size: string,
+    hostname: string,
+    comment: string,
+    tags: string,
+}
+
+// Global state for the entire application, like current view
 export global AppState {
     callback navigate(string);
     in-out property <string> current_view: "dashboard";
     in-out property <bool> is_processing: false;
     in-out property <float> progress: 0.0;
+    
+    // Password Dialog State
+    in-out property <bool> show_password_dialog: false;
+    in-out property <string> password_dialog_message: "Please enter the repository passphrase:";
+    // Tracks which action should be retried after authentication ("" | "backup" | "restore")
+    in-out property <string> pending_auth_action;
+    callback password_dialog_submitted(string);
+    callback password_dialog_cancelled();
 }
 
 export global DashboardLogic {
-    callback select_repo(RepoItem);
-    callback create_new_archive();
+    in property <[RepoItem]> repositories;
+    in property <int> active_repo_index;
+    in property <bool> has_selected_repo;
+    in property <[ArchiveEntry]> archives;
+    in property <string> terminal_text;
+    in-out property <length> terminal_height: 200px;
+    
+    // Ready for backup state
+    in property <bool> has_pending_archive: false;
+    in property <[string]> pending_archive_paths;
+
+    callback new_archive_clicked();
+    callback backup_clicked();
     callback refresh_archives();
-    in property <[RepoItem]> repositories: [
-        { name: "Local Documents", path: "/mnt/backup/docs", repo_type: "local" },
-        { name: "S3 Photos", path: "s3://my-bucket/photos", repo_type: "s3" }
-    ];
-    in property <[[StandardListViewItem]]> archive_data: [
-        [ { text: "daily-2023-10-24" }, { text: "2023-10-24 04:00" }, { text: "1.2 GB" } ],
-        [ { text: "daily-2023-10-23" }, { text: "2023-10-23 04:00" }, { text: "1.1 GB" } ]
-    ];
+    callback select_repo(int);
+    callback open_restore(ArchiveEntry);
+}
+
+export global NewArchiveWizardLogic {
+    in-out property <int> current_step;
+    
+    // Step 1: Paths
+    in-out property <[string]> backup_paths;
+    
+    // Step 2: Settings
+    in-out property <string> compression_level: "zstd,3"; // default
+    in-out property <string> redundancy: "none";
+    
+    // Step 3: Metadata
+    in-out property <bool> use_custom_name: false;
+    in-out property <string> archive_name;
+    in-out property <string> comment;
+    in-out property <string> tags; // comma separated
+
+    callback add_path();
+    callback remove_path(int);
+    callback back();
+    callback next();
+    callback finish();
+    callback cancel();
+}
+
+export global InitWizardLogic {
+    in-out property <int> current_step;
+    in-out property <string> repo_type: "local";
+    in-out property <string> repo_name;
+    in-out property <string> path_url;
+    in-out property <string> access_key;
+    in-out property <string> secret_key;
+    in-out property <string> password;
+    in-out property <string> retype_password;
+
+    callback back();
+    callback next();
+    callback finish();
+    callback cancel();
+}
+
+export global RestoreLogic {
+    in-out property <string> selected_archive;
+    in-out property <string> restore_path;
+    in-out property <bool> dry_run;
+    in-out property <bool> use_original_paths; // restore to the same paths used during backup
+
+    callback browse_path();
+    callback start_restore();
+    callback cancel();
 }

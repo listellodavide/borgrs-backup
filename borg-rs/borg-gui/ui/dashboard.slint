@@ -1,30 +1,6 @@
 import { Button, VerticalBox, HorizontalBox, StandardListView, ScrollView } from "std-widgets.slint";
-
-export struct ArchiveEntry {
-    name: string,
-    date: string,
-    size: string,
-}
-
-export global DashboardLogic {
-    // Repository management
-    in property <[string]> repositories: ["local-backups", "s3-photos", "work-server"];
-    in property <int> active_repo_index: 0;
-
-    // Archive data for the table
-    in property <[ArchiveEntry]> archives: [
-        { name: "daily-2023-11-20-0001", date: "2023-11-20 00:01", size: "1.2 GB" },
-        { name: "daily-2023-11-19-0001", date: "2023-11-19 00:01", size: "1.1 GB" },
-        { name: "manual-patch-apply", date: "2023-11-18 15:30", size: "850 MB" },
-        { name: "weekly-2023-W46", date: "2023-11-12 02:00", size: "4.5 GB" }
-    ];
-
-    // Terminal/Console output
-    in property <string> terminal_text: "$ borg list -r /mnt/backups/local-backups\n[2023-11-21 10:45:01] Loading repository...\n[2023-11-21 10:45:02] Fetching archive list\n(5 entries found)";
-
-    callback new_archive_clicked();
-    callback select_repo(int);
-}
+import { DashboardLogic, ArchiveEntry, AppState } from "globals.slint";
+import { Theme, CyberButton } from "theme.slint";
 
 component ToolIcon inherits Rectangle {
     in property <string> icon_text;
@@ -33,47 +9,57 @@ component ToolIcon inherits Rectangle {
 
     height: 40px;
     width: 40px;
-    background: active ? #353b3d : transparent;
-    border-left-width: active ? 2px : 0px;
-    border-left-color: #389fd6;
+    background: active ? Theme.surface : transparent;
+
+    Rectangle {
+        x: 0;
+        width: 3px;
+        height: parent.height;
+        background: root.active ? Theme.primary : transparent;
+    }
 
     touch := TouchArea {}
 
     Text {
         text: root.icon_text;
         font-size: 18px;
-        color: active ? #ffffff : #858585;
+        color: active ? Theme.text : Theme.text-muted;
     }
 }
 
 export component DashboardView inherits Rectangle {
-    background: #1e1f22; // Modern IDE Dark
+    background: Theme.background;
 
     VerticalLayout {
         // --- Top Menu Bar ---
         Rectangle {
-            height: 35px;
-            background: #2b2d30;
+            height: 40px;
+            background: Theme.surface;
             HorizontalLayout {
-                padding-left: 10px; spacing: 15px;
-                Text { text: "File"; color: #bbbbbb; vertical-alignment: center; }
-                Text { text: "Edit"; color: #bbbbbb; vertical-alignment: center; }
-                Text { text: "View"; color: #bbbbbb; vertical-alignment: center; }
-                Text { text: "Repositories"; color: #389fd6; vertical-alignment: center; font-weight: 700; }
+                padding-left: 15px; spacing: 20px;
+                Text { text: "File"; color: Theme.text-muted; vertical-alignment: center; }
+                Text { text: "Edit"; color: Theme.text-muted; vertical-alignment: center; }
+                Text { text: "View"; color: Theme.text-muted; vertical-alignment: center; }
+                Text { text: "Repositories"; color: Theme.primary; vertical-alignment: center; font-weight: 700; }
                 Rectangle {} // Spacer
-                Text { text: "🔍"; vertical-alignment: center; color: #bbbbbb; }
-                Text { text: "⚙️"; vertical-alignment: center; color: #bbbbbb; }
+                Text { text: "🔍"; vertical-alignment: center; color: Theme.text-muted; }
+                Text { text: "⚙️"; vertical-alignment: center; color: Theme.text-muted; }
                 Rectangle { width: 10px; }
             }
         }
 
         HorizontalLayout {
-            // --- Side Tool Window Bar (IntelliJ Style) ---
+            // --- Side Tool Window Bar ---
             Rectangle {
-                width: 45px;
-                background: #2b2d30;
-                border-right-width: 1px;
-                border-right-color: #393b40;
+                width: 50px;
+                background: Theme.surface;
+
+                Rectangle {
+                    x: parent.width - 1px;
+                    width: 1px;
+                    height: parent.height;
+                    background: Theme.border;
+                }
 
                 VerticalLayout {
                     padding-top: 10px;
@@ -90,32 +76,46 @@ export component DashboardView inherits Rectangle {
             VerticalLayout {
                 // Breadcrumbs & Actions
                 Rectangle {
-                    height: 45px;
-                    background: #1e1f22;
+                    height: 60px;
+                    background: Theme.background;
                     HorizontalLayout {
-                        padding: 10px; spacing: 10px;
-                        Text { text: "local-backups"; color: #858585; vertical-alignment: center; }
-                        Text { text: ">"; color: #555555; vertical-alignment: center; }
-                        Text { text: "archives"; color: #bbbbbb; vertical-alignment: center; }
+                        padding: 15px; spacing: 10px;
+                        Text { text: "local-backups"; color: Theme.text-muted; vertical-alignment: center; }
+                        Text { text: ">"; color: Theme.border; vertical-alignment: center; }
+                        Text { text: "archives"; color: Theme.text; vertical-alignment: center; }
 
                         Rectangle {} // Spacer
+
+                        CyberButton {
+                            text: "BACKUP NOW";
+                            border-color: DashboardLogic.has_pending_archive ? #ff9800 : Theme.primary;
+                            background: self.pressed ? (DashboardLogic.has_pending_archive ? #ef6c00 : Theme.primary) : (self.hovered ? (DashboardLogic.has_pending_archive ? #ffb74d : Theme.primary_dim) : transparent);
+                            // color is handled inside CyberButton, we might need to tweak it there or just use the defaults
+                            clicked => { DashboardLogic.backup_clicked() }
+                        }
 
                         Button {
                             text: "+ NEW ARCHIVE";
                             primary: true;
+                            enabled: DashboardLogic.has_selected_repo;
                             clicked => { DashboardLogic.new_archive_clicked() }
+                        }
+
+                        Button {
+                            text: "+ NEW REPO";
+                            clicked => { AppState.navigate("init") }
                         }
                     }
                 }
 
                 // Table Headers
                 Rectangle {
-                    height: 30px;
-                    background: #2b2d30;
+                    height: 35px;
+                    background: Theme.surface;
                     HorizontalLayout {
                         padding-left: 20px;
-                        Text { text: "Name"; width: 250px; color: #858585; font-size: 12px; vertical-alignment: center; }
-                        Text { text: "Date"; color: #858585; font-size: 12px; vertical-alignment: center; }
+                        Text { text: "Name"; width: 300px; color: Theme.text-muted; font-size: 13px; vertical-alignment: center; }
+                        Text { text: "Date"; color: Theme.text-muted; font-size: 13px; vertical-alignment: center; }
                         Rectangle {}
                     }
                 }
@@ -124,48 +124,149 @@ export component DashboardView inherits Rectangle {
                 ScrollView {
                     VerticalLayout {
                         padding: 5px;
+                        
+                        // Pending Archive Status Box
+                        if (DashboardLogic.has_pending_archive) : Rectangle {
+                            height: 80px;
+                            background: Theme.surface;
+                            border-width: 2px;
+                            border-color: #137fec; // Blue border
+                            border-radius: 4px;
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 4px;
+                                Text {
+                                    text: "Archive is now ready to execute for folder:";
+                                    color: #137fec;
+                                    font-weight: 700;
+                                    font-size: 14px;
+                                }
+                                ScrollView {
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        for path in DashboardLogic.pending_archive_paths : Text {
+                                            text: "📁 " + path;
+                                            color: Theme.text;
+                                            font-size: 12px;
+                                            font-family: "JetBrains Mono";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         for entry in DashboardLogic.archives: Rectangle {
-                            height: 35px;
-                            background: touch_row.has-hover ? #2d2f33 : transparent;
+                            height: 60px;
+                            background: touch_row.has-hover ? Theme.surface : transparent;
                             touch_row := TouchArea {}
-                            HorizontalLayout {
+                            VerticalLayout {
                                 padding-left: 15px;
-                                Text { text: entry.name; width: 250px; color: #bcbec4; vertical-alignment: center; font-family: "JetBrains Mono"; }
-                                Text { text: entry.date; color: #858585; vertical-alignment: center; }
+                                padding-right: 15px;
+                                alignment: center;
+                                HorizontalLayout {
+                                    Text { text: entry.name; width: 300px; color: Theme.text; vertical-alignment: center; font-family: "JetBrains Mono"; font-weight: 700; }
+                                    Text { text: entry.date; color: Theme.text-muted; vertical-alignment: center; }
+                                    Rectangle {}
+                                    Button {
+                                        text: "Restore";
+                                        clicked => { DashboardLogic.open_restore(entry) }
+                                    }
+                                    Rectangle { width: 10px; }
+                                }
+                                if (entry.hostname != "" || entry.comment != "" || entry.tags != "") : HorizontalLayout {
+                                    spacing: 10px;
+                                    if (entry.hostname != "") : Text { text: "🖥️ " + entry.hostname; color: Theme.text-muted; font-size: 11px; }
+                                    if (entry.comment != "") : Text { text: "💬 " + entry.comment; color: Theme.text-muted; font-size: 11px; font-italic: true; }
+                                    if (entry.tags != "") : Text { text: "🏷️ " + entry.tags; color: Theme.primary; font-size: 11px; }
+                                }
                             }
                         }
                         Rectangle {} // Fill remaining space
                     }
                 }
 
-                // --- Bottom Terminal ---
+                // --- Bottom Progress & Terminal ---
                 Rectangle {
-                    height: 180px;
-                    background: #1e1f22;
-                    border-top-width: 1px;
-                    border-top-color: #393b40;
+                    height: DashboardLogic.terminal_height;
+                    background: Theme.background;
+
+                    // Resize handle
+                    Rectangle {
+                        y: 0;
+                        height: 5px;
+                        width: parent.width;
+                        background: touch_resize.has-hover ? Theme.primary.with-alpha(0.5) : Theme.border;
+                        
+                        touch_resize := TouchArea {
+                            mouse-cursor: row-resize;
+                            moved => {
+                                if (self.pressed) {
+                                    // Calculate new height. Since the terminal is at the bottom, 
+                                    // dragging UP (negative mouse-y relative to top of this rect) 
+                                    // should INCREASE the height.
+                                    // However, moved mouse-y is relative to the start of the drag on this TouchArea.
+                                    // Better to use global mouse pos or just adjust based on delta.
+                                    let delta = self.mouse-y - self.pressed-y;
+                                    let new_height = DashboardLogic.terminal_height - delta;
+                                    // Constrain height
+                                    if (new_height > 100px && new_height < 500px) {
+                                        DashboardLogic.terminal_height = new_height;
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     VerticalLayout {
+                        padding: 10px;
+                        padding-top: 15px; // Extra padding for the resize handle
+                        spacing: 10px;
+                        
+                        // Progress Bar Section
+                        if (AppState.is_processing) : VerticalLayout {
+                            spacing: 5px;
+                            HorizontalLayout {
+                                Text { text: "Backup Progress"; color: Theme.text; font-weight: 700; }
+                                Rectangle {}
+                                Text { text: round(AppState.progress * 100) + "%"; color: Theme.primary; font-family: "JetBrains Mono"; }
+                            }
+                            Rectangle {
+                                height: 8px;
+                                background: Theme.surface;
+                                border-radius: 4px;
+                                Rectangle {
+                                    x: 0;
+                                    width: parent.width * AppState.progress;
+                                    height: parent.height;
+                                    background: Theme.primary;
+                                    border-radius: 4px;
+                                }
+                            }
+                        }
+
                         // Terminal Tabs
                         Rectangle {
                             height: 30px;
-                            background: #2b2d30;
+                            background: Theme.surface;
                             HorizontalLayout {
                                 padding-left: 15px; spacing: 20px;
-                                Text { text: "TERMINAL"; color: #ffffff; font-size: 11px; font-weight: 700; vertical-alignment: center; }
-                                Text { text: "OUTPUT"; color: #858585; font-size: 11px; vertical-alignment: center; }
+                                Text { text: "TERMINAL"; color: Theme.text; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                                Text { text: "OUTPUT"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
                                 Rectangle {}
-                                Text { text: "✕"; color: #858585; vertical-alignment: center; padding-right: 10px; }
+                                Text { text: "✕"; color: Theme.text-muted; vertical-alignment: center; }
+                                Rectangle { width: 10px; }
                             }
                         }
                         // Console Text
                         ScrollView {
-                            padding: 10px;
-                            Text {
-                                text: DashboardLogic.terminal_text;
-                                color: #bcbec4;
-                                font-family: "JetBrains Mono";
-                                font-size: 12px;
+                            VerticalLayout {
+                                padding: 10px;
+                                Text {
+                                    text: DashboardLogic.terminal_text;
+                                    color: Theme.text;
+                                    font-family: "JetBrains Mono";
+                                    font-size: 12px;
+                                }
                             }
                         }
                     }
@@ -176,13 +277,13 @@ export component DashboardView inherits Rectangle {
         // --- Status Bar ---
         Rectangle {
             height: 25px;
-            background: #2b2d30;
+            background: Theme.surface;
             HorizontalLayout {
                 padding-left: 10px; padding-right: 10px; spacing: 15px;
-                Text { text: "● All systems nominal"; color: #62b47b; font-size: 11px; vertical-alignment: center; }
-                Text { text: "Last sync: 2m ago"; color: #858585; font-size: 11px; vertical-alignment: center; }
+                Text { text: "● All systems nominal"; color: Theme.primary; font-size: 11px; vertical-alignment: center; }
+                Text { text: "Last sync: 2m ago"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
                 Rectangle {}
-                Text { text: "Borg 1.2.4"; color: #bbbbbb; font-size: 11px; vertical-alignment: center; font-weight: 700; }
+                Text { text: "Borg 1.2.4"; color: Theme.text; font-size: 11px; vertical-alignment: center; font-weight: 700; }
             }
         }
     }

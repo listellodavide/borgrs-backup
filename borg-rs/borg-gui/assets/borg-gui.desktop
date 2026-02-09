@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Borg GUI
+Comment=High-performance backup solution
+Exec=borg-gui
+Icon=borg-gui
+Terminal=false
+Type=Application
+Categories=Utility;Archiving;
+Keywords=backup;restore;deduplication;

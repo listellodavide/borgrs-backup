@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Initialize New Repository</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#137fec",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#101922",
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Manrope', sans-serif;
+        }
+        .step-active {
+            background-color: #137fec;
+            width: 2rem;
+        }
+        .step-inactive {
+            background-color: #3b4754;
+            width: 0.5rem;
+        }
+        input:focus {
+            border-color: #137fec !0important;
+            ring-color: #137fec !important;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white min-h-screen flex flex-col">
+<!-- Top App Bar -->
+<header class="sticky top-0 z-10 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+<div class="flex items-center p-4 justify-between max-w-md mx-auto w-full">
+<div class="flex items-center gap-3">
+<button class="text-slate-600 dark:text-slate-400 hover:text-primary transition-colors">
+<span class="material-symbols-outlined">close</span>
+</button>
+<h1 class="text-lg font-bold tracking-tight">Init New Repository</h1>
+</div>
+<button class="text-slate-600 dark:text-slate-400">
+<span class="material-symbols-outlined">help</span>
+</button>
+</div>
+</header>
+<main class="flex-1 overflow-y-auto w-full max-w-md mx-auto pb-32">
+<!-- Step Indicator -->
+<div class="flex w-full flex-row items-center justify-center gap-2 py-6">
+<div class="h-1.5 rounded-full step-active transition-all duration-300"></div>
+<div class="h-1.5 rounded-full step-inactive transition-all duration-300"></div>
+<div class="h-1.5 rounded-full step-inactive transition-all duration-300"></div>
+</div>
+<!-- Step 1 Content: Select Type -->
+<section class="px-4 animate-in fade-in slide-in-from-right-4 duration-500">
+<header class="mb-6">
+<h2 class="text-2xl font-extrabold leading-tight">Step 1: Select Type</h2>
+<p class="text-slate-500 dark:text-slate-400 text-sm mt-1">Choose where your backup data will be stored.</p>
+</header>
+<div class="flex flex-col gap-3">
+<label class="flex items-center gap-4 rounded-xl border-2 border-primary bg-primary/5 p-4 cursor-pointer group transition-all">
+<div class="flex size-10 items-center justify-center rounded-lg bg-primary text-white">
+<span class="material-symbols-outlined">folder_open</span>
+</div>
+<div class="flex grow flex-col">
+<p class="font-bold text-sm">Local Path</p>
+<p class="text-slate-500 dark:text-slate-400 text-xs">Backup to local drive or NAS</p>
+</div>
+<input checked="" class="h-5 w-5 border-2 border-slate-300 dark:border-slate-600 bg-transparent text-primary focus:ring-primary focus:ring-offset-background-dark checked:border-primary" name="repo_type" type="radio"/>
+</label>
+<label class="flex items-center gap-4 rounded-xl border border-slate-200 dark:border-slate-800 p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all">
+<div class="flex size-10 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+<span class="material-symbols-outlined">cloud_queue</span>
+</div>
+<div class="flex grow flex-col">
+<p class="font-bold text-sm text-slate-700 dark:text-slate-200">S3 Storage</p>
+<p class="text-slate-500 dark:text-slate-400 text-xs">Amazon S3 or compatible service</p>
+</div>
+<input class="h-5 w-5 border-2 border-slate-300 dark:border-slate-600 bg-transparent text-primary focus:ring-primary focus:ring-offset-background-dark" name="repo_type" type="radio"/>
+</label>
+<label class="flex items-center gap-4 rounded-xl border border-slate-200 dark:border-slate-800 p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all">
+<div class="flex size-10 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+<span class="material-symbols-outlined">dns</span>
+</div>
+<div class="flex grow flex-col">
+<p class="font-bold text-sm text-slate-700 dark:text-slate-200">WebDAV</p>
+<p class="text-slate-500 dark:text-slate-400 text-xs">Nextcloud, OwnCloud, or WebDAV</p>
+</div>
+<input class="h-5 w-5 border-2 border-slate-300 dark:border-slate-600 bg-transparent text-primary focus:ring-primary focus:ring-offset-background-dark" name="repo_type" type="radio"/>
+</label>
+<label class="flex items-center gap-4 rounded-xl border border-slate-200 dark:border-slate-800 p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all">
+<div class="flex size-10 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+<span class="material-symbols-outlined">terminal</span>
+</div>
+<div class="flex grow flex-col">
+<p class="font-bold text-sm text-slate-700 dark:text-slate-200">SFTP</p>
+<p class="text-slate-500 dark:text-slate-400 text-xs">Secure File Transfer over SSH</p>
+</div>
+<input class="h-5 w-5 border-2 border-slate-300 dark:border-slate-600 bg-transparent text-primary focus:ring-primary focus:ring-offset-background-dark" name="repo_type" type="radio"/>
+</label>
+</div>
+<hr class="my-8 border-slate-200 dark:border-slate-800"/>
+<!-- Step 2 Placeholder -->
+<header class="mb-4 opacity-50">
+<h2 class="text-xl font-bold leading-tight">Step 2: Connection Details</h2>
+</header>
+<div class="space-y-4 opacity-50 pointer-events-none">
+<div class="flex flex-col gap-1.5">
+<label class="text-xs font-bold uppercase tracking-wider text-slate-500">Repository Path</label>
+<div class="relative">
+<input class="w-full rounded-lg border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 text-sm focus:border-primary focus:ring-primary" disabled="" placeholder="/mnt/backups/borg-repo" type="text"/>
+<span class="material-symbols-outlined absolute right-3 top-2.5 text-slate-400">folder</span>
+</div>
+</div>
+</div>
+<hr class="my-8 border-slate-200 dark:border-slate-800"/>
+<!-- Step 3 Placeholder -->
+<header class="mb-4 opacity-50">
+<h2 class="text-xl font-bold leading-tight">Step 3: Security</h2>
+</header>
+<div class="space-y-4 opacity-50 pointer-events-none">
+<div class="flex flex-col gap-1.5">
+<label class="text-xs font-bold uppercase tracking-wider text-slate-500">Encryption Password</label>
+<div class="relative">
+<input class="w-full rounded-lg border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 text-sm" disabled="" placeholder="••••••••••••" type="password"/>
+<span class="material-symbols-outlined absolute right-3 top-2.5 text-slate-400">visibility</span>
+</div>
+</div>
+<!-- Strength Meter Mockup -->
+<div class="flex gap-1 h-1.5 w-full rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800">
+<div class="w-1/4 bg-slate-400"></div>
+<div class="w-3/4"></div>
+</div>
+</div>
+</section>
+</main>
+<!-- Navigation Footer -->
+<footer class="fixed bottom-0 inset-x-0 p-4 bg-background-light/90 dark:bg-background-dark/90 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 z-20">
+<div class="max-w-md mx-auto flex gap-3">
+<button class="flex-1 px-4 py-4 rounded-xl text-sm font-bold border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-lg">arrow_back</span>
+                Back
+            </button>
+<button class="flex-[2] px-4 py-4 rounded-xl text-sm font-bold bg-primary text-white shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2">
+                Continue
+                <span class="material-symbols-outlined text-lg">arrow_forward</span>
+</button>
+</div>
+<!-- Safe Area Padding for iOS -->
+<div class="h-6"></div>
+</footer>
+</body></html>

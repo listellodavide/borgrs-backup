@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Borg-Rust Contributors"]
 license = "BSD-3-Clause"
+description = "A modern GUI for Borg Backup written in Rust and Slint."
+repository = "https://github.com/borg-rust/borg-rust"
 
 [dependencies]
 slint = "1.8"
@@ -13,6 +15,44 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 borg-core = { path = "../borg-core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rfd = "0.14"
+chrono = { version = "0.4", features = ["clock"] }
 
 [build-dependencies]
 slint-build = "1.8"
+
+# --- Packaging Metadata ---
+
+# Debian (.deb) - requires `cargo-deb`
+[package.metadata.deb]
+section = "utils"
+maintainer = "Borg-Rust Contributors <maintainers@borg-rust.org>"
+copyright = "2024, Borg-Rust Contributors"
+license-file = "../../LICENSE"
+depends = "$auto"
+assets = [
+    ["target/release/borg-gui", "usr/bin/", "755"],
+    ["assets/icon.png", "usr/share/pixmaps/borg-gui.png", "644"],
+    ["assets/borg-gui.desktop", "usr/share/applications/borg-gui.desktop", "644"]
+]
+
+# Fedora/RHEL (.rpm) - requires `cargo-generate-rpm`
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/borg-gui", dest = "/usr/bin/borg-gui", mode = "755" },
+    { source = "assets/icon.png", dest = "/usr/share/pixmaps/borg-gui.png", mode = "644" },
+    { source = "assets/borg-gui.desktop", dest = "/usr/share/applications/borg-gui.desktop", mode = "644" }
+]
+
+# macOS (.dmg / .app) - requires `cargo-bundle`
+[package.metadata.bundle]
+name = "Borg GUI"
+identifier = "org.borg-rust.gui"
+icon = ["assets/icon.png"]
+version = "0.1.0"
+copyright = "Copyright (c) Borg-Rust Contributors 2024"
+category = "Utility"
+short_description = "Borg Backup GUI"
+long_description = "A modern GUI for Borg Backup written in Rust and Slint."

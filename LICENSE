@@ -1,21 +1,21 @@
-MIT License
+The "Adiwave Restricted License" (v1.1)
 
-Copyright (c) 2026 Davide Listello
+Copyright (c) 2026 Davide Listello davide.listello@gmail.com
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, subject to the following Mandatory Conditions:
+1. Prohibition of "Pay-per-Use" Derived Works
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+You may not create, distribute, or operate any derivative work based on this Software that utilizes a "pay-per-use," "metered," or "transaction-based" billing model. Any commercial application that charges users based on specific interactions, API calls, or usage volume of the Software’s logic is strictly prohibited under this license.
+2. Requirement for Written Consent
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Notwithstanding the permissions above, any person or entity wishing to create a derivative work or utilize this Software within a commercial product must obtain prior express written consent via email from Davide Listello at davide.listello@gmail.com. Use of the Software in a commercial or derived capacity without a documented "Consent of Use" from the author constitutes a breach of this license.
+3. Author’s Exclusive Commercial Rights
+
+The Author (Davide Listello) reserves all exclusive rights to monetize the Software. Specifically, the Author retains the sole right to charge fees for software backups, data recovery services, or managed hosting utilizing this Software. No other party may offer paid backup services based on this Software without a separate, specific commercial agreement signed by the Author.
+4. Preservation of Notice
+
+The above copyright notice, this list of conditions, and the following disclaimer shall be included in all copies or substantial portions of the Software, including any permitted modifications or derived works.
+5. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+

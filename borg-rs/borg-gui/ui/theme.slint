@@ -1,0 +1,67 @@
+// Catppuccin Mocha + Cyberpunk accents theme and a reusable CyberButton
+
+export global Theme {
+    // Catppuccin Mocha Palette
+    out property <color> base: #1e1e2e;
+    out property <color> mantle: #181825;
+    out property <color> crust: #11111b;
+    out property <color> text: #cdd6f4;
+    out property <color> subtext: #a6adc8;
+
+    // Cyberpunk Accents (Lime/Green focus)
+    out property <color> primary: #a6e3a1; // Green
+    out property <color> primary_dim: #94e2d5; // Teal
+    out property <color> accent: #f5c2e7;   // Pink (for high-contrast alerts)
+    out property <color> border_color: #313244;
+
+    // Backwards-compat aliases for existing UI code
+    out property <color> background: base;        // map old background -> base
+    out property <color> surface: mantle;         // map old surface -> mantle
+    out property <color> border: border_color;    // map old border -> border_color
+    out property <color> text-muted: subtext;     // map old text-muted -> subtext
+    out property <color> secondary: #89b4fa;      // blue/violet accent
+
+    // Shadows and Glows (not all properties may be used everywhere)
+    out property <length> glow_spread: 4px;
+    out property <color> glow_color: rgba(166, 227, 161, 0.3);
+}
+
+// Cyberpunk-style bordered text button
+export component CyberButton inherits Rectangle {
+    in-out property <string> text;
+    callback clicked;
+
+    // Interaction state
+    out property <bool> hovered: touch.has-hover;
+    out property <bool> pressed: touch.pressed;
+
+    height: 40px;
+    min-width: 120px;
+    border-width: 1px;
+    border-color: Theme.primary;
+    background: pressed ? Theme.primary : (hovered ? Theme.primary_dim : transparent);
+    clip: true;
+
+    // Label
+    Text {
+        text: root.text;
+        color: root.pressed ? Theme.crust : (root.border-color != Theme.primary ? root.border-color : Theme.primary);
+        font-weight: 700;
+        letter-spacing: 1px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    // Simple corner accent without rotation to keep compatibility
+    Rectangle {
+        x: parent.width - 8px;
+        y: parent.height - 8px;
+        width: 8px;
+        height: 8px;
+        background: root.border-color;
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}

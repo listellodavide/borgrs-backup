@@ -1,47 +1,56 @@
 import { Button, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
-
-export global InitWizardLogic {
-    in-out property <int> current_step: 0;
-    in-out property <string> repo_type: "local";
-
-    // Form fields
-    in-out property <string> path_url;
-    in-out property <string> access_key;
-    in-out property <string> secret_key;
-    in-out property <string> password;
-
-    callback back();
-    callback next();
-    callback cancel();
-    callback finish();
-}
+import { InitWizardLogic } from "globals.slint";
+import { Theme } from "theme.slint";
 
 component WizardStepLabel inherits Text {
     in property <bool> active;
     in property <bool> completed;
-    color: active ? #42A5F5 : (completed ? #66BB6A : #787878);
+    color: active ? Theme.primary : (completed ? Theme.primary : Theme.text-muted);
     font-size: 14px;
     font-weight: active ? 700 : 400;
 }
 
+component SelectionButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked <=> touch.clicked;
+
+    height: 45px;
+    background: selected ? Theme.primary : Theme.surface;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: selected ? Theme.primary : Theme.border;
+
+    touch := TouchArea {
+    }
+
+    Text {
+        text: root.text;
+        color: selected ? Theme.background : Theme.text;
+        font-weight: selected ? 800 : 400;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+}
+
 export component InitWizardView inherits Rectangle {
-    background: #2b2b2b;
+    background: Theme.background;
     border-radius: 8px;
 
     HorizontalLayout {
         // --- Left Stepper ---
         Rectangle {
-            width: 180px;
-            background: #232323;
+            width: 200px;
+            background: Theme.surface;
             border-top-left-radius: 8px;
             border-bottom-left-radius: 8px;
 
             VerticalLayout {
-                padding: 20px;
-                spacing: 20px;
-                Text { text: "INITIALIZE"; font-size: 12px; color: #555; font-weight: 800; }
+                padding: 25px;
+                spacing: 25px;
+                Text { text: "NEW REPOSITORY"; font-size: 12px; color: Theme.text-muted; font-weight: 800; }
                 WizardStepLabel { text: "1. Storage Type"; active: InitWizardLogic.current_step == 0; completed: InitWizardLogic.current_step > 0; }
-                WizardStepLabel { text: "2. Connection"; active: InitWizardLogic.current_step == 1; completed: InitWizardLogic.current_step > 1; }
+                WizardStepLabel { text: "2. Details"; active: InitWizardLogic.current_step == 1; completed: InitWizardLogic.current_step > 1; }
                 WizardStepLabel { text: "3. Security"; active: InitWizardLogic.current_step == 2; completed: InitWizardLogic.current_step > 2; }
                 WizardStepLabel { text: "4. Review"; active: InitWizardLogic.current_step == 3; }
                 Rectangle {} // Spacer
@@ -50,54 +59,121 @@ export component InitWizardView inherits Rectangle {
 
         // --- Right Content Area ---
         VerticalLayout {
-            padding: 30px;
-            spacing: 20px;
+            padding: 40px;
+            spacing: 25px;
 
-            // Step Content Switcher
+            // Step 0: Storage Type
             if (InitWizardLogic.current_step == 0) : VerticalLayout {
-                spacing: 15px;
-                Text { text: "Select Storage Backend"; font-size: 18px; color: white; }
+                spacing: 20px;
+                Text { text: "Select Storage Backend"; font-size: 22px; color: Theme.text; font-weight: 700; }
                 HorizontalLayout {
-                    spacing: 10px;
-                    // Mock radio buttons/cards
-                    Button { text: "Local Directory"; primary: InitWizardLogic.repo_type == "local"; clicked => { InitWizardLogic.repo_type = "local" } }
-                    Button { text: "S3 / Cloud"; primary: InitWizardLogic.repo_type == "s3"; clicked => { InitWizardLogic.repo_type = "s3" } }
-                    Button { text: "SSH / SFTP"; primary: InitWizardLogic.repo_type == "ssh"; clicked => { InitWizardLogic.repo_type = "ssh" } }
+                    spacing: 15px;
+                    SelectionButton { 
+                        text: "Local Repository"; 
+                        selected: InitWizardLogic.repo_type == "local"; 
+                        clicked => { InitWizardLogic.repo_type = "local" } 
+                    }
+                    SelectionButton { 
+                        text: "Remote Repository"; 
+                        selected: InitWizardLogic.repo_type == "remote"; 
+                        clicked => { InitWizardLogic.repo_type = "remote" } 
+                    }
                 }
             }
 
+            // Step 1: Details
             if (InitWizardLogic.current_step == 1) : VerticalLayout {
-                spacing: 15px;
-                Text { text: "Connection Details"; font-size: 18px; color: white; }
-                Text { text: "Path or URL"; color: #aaa; }
-                LineEdit { text <=> InitWizardLogic.path_url; placeholder-text: "/path/to/repo or s3://bucket"; }
+                spacing: 20px;
+                Text { text: "Repository Details"; font-size: 22px; color: Theme.text; font-weight: 700; }
+                
+                VerticalLayout {
+                    spacing: 8px;
+                    Text { text: "Repository Name"; color: Theme.text-muted; font-size: 14px; }
+                    LineEdit { 
+                        text <=> InitWizardLogic.repo_name; 
+                        placeholder-text: "e.g. MyBackups"; 
+                    }
+                }
 
-                if (InitWizardLogic.repo_type == "s3") : VerticalLayout {
-                    spacing: 10px;
-                    Text { text: "Access Key"; color: #aaa; }
-                    LineEdit { text <=> InitWizardLogic.access_key; }
-                    Text { text: "Secret Key"; color: #aaa; }
-                    LineEdit { text <=> InitWizardLogic.secret_key; input-type: password; }
+                VerticalLayout {
+                    spacing: 8px;
+                    Text { text: InitWizardLogic.repo_type == "local" ? "Absolute Folder Path" : "Remote URL (ssh://user@host/path)"; color: Theme.text-muted; font-size: 14px; }
+                    LineEdit { 
+                        text <=> InitWizardLogic.path_url; 
+                        placeholder-text: InitWizardLogic.repo_type == "local" ? "/home/user/backups" : "ssh://user@host/path"; 
+                    }
+                }
+
+                if (InitWizardLogic.repo_type == "remote") : VerticalLayout {
+                    spacing: 15px;
+                    Text { text: "Authentication (if needed)"; color: Theme.text-muted; font-size: 14px; }
+                    HorizontalLayout {
+                        spacing: 15px;
+                        VerticalLayout {
+                            spacing: 5px;
+                            Text { text: "Access Key / User"; color: Theme.text-muted; font-size: 12px; }
+                            LineEdit { text <=> InitWizardLogic.access_key; }
+                        }
+                        VerticalLayout {
+                            spacing: 5px;
+                            Text { text: "Secret Key / Pass"; color: Theme.text-muted; font-size: 12px; }
+                            LineEdit { text <=> InitWizardLogic.secret_key; input-type: password; }
+                        }
+                    }
                 }
             }
 
+            // Step 2: Security
             if (InitWizardLogic.current_step == 2) : VerticalLayout {
-                spacing: 15px;
-                Text { text: "Repository Encryption"; font-size: 18px; color: white; }
-                Text { text: "Enter a strong password to encrypt your backups."; color: #aaa; }
-                LineEdit { text <=> InitWizardLogic.password; input-type: password; placeholder-text: "New Password"; }
-                LineEdit { input-type: password; placeholder-text: "Repeat Password"; }
+                spacing: 20px;
+                Text { text: "Encryption Password"; font-size: 22px; color: Theme.text; font-weight: 700; }
+                Text { 
+                    text: "Enter a strong password to protect your repository encryption key."; 
+                    color: Theme.text-muted; 
+                    wrap: word-wrap;
+                }
+                
+                VerticalLayout {
+                    spacing: 10px;
+                    LineEdit { 
+                        text <=> InitWizardLogic.password; 
+                        input-type: password; 
+                        placeholder-text: "Encryption Password"; 
+                    }
+                    LineEdit { 
+                        text <=> InitWizardLogic.retype_password; 
+                        input-type: password; 
+                        placeholder-text: "Retype Password"; 
+                    }
+                    if (InitWizardLogic.password != "" && InitWizardLogic.password != InitWizardLogic.retype_password) : Text {
+                        text: "Passwords do not match!";
+                        color: #ff5555;
+                        font-size: 12px;
+                    }
+                }
             }
 
+            // Step 3: Review
             if (InitWizardLogic.current_step == 3) : VerticalLayout {
-                spacing: 15px;
-                Text { text: "Final Review"; font-size: 18px; color: white; }
+                spacing: 20px;
+                Text { text: "Final Review"; font-size: 22px; color: Theme.text; font-weight: 700; }
                 Rectangle {
-                    background: #1e1e1e;
-                    padding: 10px;
-                    Text {
-                        text: "Command: borg init --encryption=repokey-blake2 " + InitWizardLogic.path_url;
-                        font-family: "Monospace"; color: #66BB6A;
+                    background: Theme.surface;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        padding: 15px;
+                        spacing: 10px;
+                        Text { text: "Name: " + InitWizardLogic.repo_name; color: Theme.text; }
+                        Text { text: "Type: " + InitWizardLogic.repo_type; color: Theme.text; }
+                        Text { text: "Path: " + InitWizardLogic.path_url; color: Theme.text; }
+                        Rectangle { height: 1px; background: Theme.border; }
+                        Text {
+                            text: "Ready to initialize repository.";
+                            color: Theme.primary;
+                            font-weight: 700;
+                        }
                     }
                 }
             }
@@ -106,21 +182,25 @@ export component InitWizardView inherits Rectangle {
 
             // --- Footer Controls ---
             HorizontalLayout {
-                spacing: 10px;
-                Button { text: "Cancel"; clicked => { InitWizardLogic.cancel() } }
+                spacing: 15px;
+                Button { 
+                    text: "Cancel"; 
+                    clicked => { InitWizardLogic.cancel() } 
+                }
                 Rectangle {} // Spacer
                 if (InitWizardLogic.current_step > 0) : Button {
                     text: "Back";
-                    clicked => { InitWizardLogic.current_step -= 1 }
+                    clicked => { InitWizardLogic.back() }
                 }
                 if (InitWizardLogic.current_step < 3) : Button {
                     text: "Next";
                     primary: true;
-                    clicked => { InitWizardLogic.current_step += 1 }
+                    clicked => { InitWizardLogic.next() }
                 }
                 if (InitWizardLogic.current_step == 3) : Button {
-                    text: "Initialize Repository";
+                    text: "CREATE";
                     primary: true;
+                    enabled: InitWizardLogic.password != "" && InitWizardLogic.password == InitWizardLogic.retype_password;
                     clicked => { InitWizardLogic.finish() }
                 }
             }

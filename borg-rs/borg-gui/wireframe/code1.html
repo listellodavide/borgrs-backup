@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Detailed Repository Dashboard UI</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "jb-gray-dark": "#1e1f22",
+                        "jb-gray-medium": "#2b2d30",
+                        "jb-gray-light": "#3c3f41",
+                        "jb-border": "#393b40",
+                        "jb-accent": "#3574f0",
+                        "jb-selection": "#2d323e",
+                        "status-success": "#59a869",
+                        "status-warning": "#edd452",
+                        "status-error": "#db5860",
+                    },
+                    fontFamily: {
+                        "sans": ["Inter", "sans-serif"],
+                        "mono": ["JetBrains Mono", "monospace"]
+                    }
+                },
+            },
+        }
+    </script>
+<style type="text/tailwindcss">
+        @layer base {
+            body {
+                @apply bg-jb-gray-dark text-[#bcbec4] font-sans antialiased overflow-hidden h-screen;
+            }
+        }
+        .tool-window-header {
+            background-color: #2b2d30;
+            border-bottom: 1px solid #393b40;
+        }
+        .archive-table tr {
+            border-bottom: 1px solid #2b2d30;
+        }
+        .archive-table tr:hover {
+            background-color: #2d323e;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #4e5157;
+            border-radius: 3px;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="flex flex-col">
+<header class="h-10 flex items-center px-3 bg-jb-gray-dark border-b border-jb-border shrink-0">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-[20px] text-jb-accent">database</span>
+<nav class="flex gap-4 text-xs font-medium">
+<span class="text-white">File</span>
+<span>Edit</span>
+<span>View</span>
+<span>Navigate</span>
+<span class="text-jb-accent border-b-2 border-jb-accent pb-1">Repositories</span>
+</nav>
+</div>
+<div class="ml-auto flex items-center gap-3">
+<span class="material-symbols-outlined text-[18px]">search</span>
+<span class="material-symbols-outlined text-[18px]">settings</span>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<aside class="w-12 md:w-64 flex border-r border-jb-border flex-col bg-jb-gray-medium shrink-0">
+<div class="tool-window-header h-8 flex items-center justify-between px-3 text-[11px] font-bold uppercase tracking-wider text-[#787878]">
+<span class="hidden md:inline">Repositories</span>
+<span class="material-symbols-outlined text-[16px]">expand_more</span>
+</div>
+<div class="flex-1 overflow-y-auto custom-scrollbar">
+<div class="flex items-center gap-2 px-3 py-2 bg-jb-selection border-l-2 border-jb-accent">
+<span class="material-symbols-outlined text-[18px] text-emerald-400">folder</span>
+<div class="hidden md:block overflow-hidden">
+<p class="text-xs font-medium text-white truncate">local-backups</p>
+</div>
+</div>
+<div class="flex items-center gap-2 px-3 py-2 hover:bg-jb-selection/50">
+<span class="material-symbols-outlined text-[18px] text-orange-400">cloud</span>
+<div class="hidden md:block overflow-hidden">
+<p class="text-xs font-medium truncate">s3-production</p>
+</div>
+</div>
+<div class="flex items-center gap-2 px-3 py-2 hover:bg-jb-selection/50">
+<span class="material-symbols-outlined text-[18px] text-blue-400">dns</span>
+<div class="hidden md:block overflow-hidden">
+<p class="text-xs font-medium truncate">offsite-sftp</p>
+</div>
+</div>
+<div class="mt-2 px-3 py-2 opacity-50 hover:opacity-100 cursor-pointer flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">add_box</span>
+<span class="text-xs hidden md:inline">Add Repository...</span>
+</div>
+</div>
+<div class="mt-auto border-t border-jb-border flex flex-col items-center gap-4 py-4 text-[#787878]">
+<span class="material-symbols-outlined text-[20px] text-jb-accent">terminal</span>
+<span class="material-symbols-outlined text-[20px]">history</span>
+</div>
+</aside>
+<main class="flex-1 flex flex-col bg-jb-gray-dark min-w-0">
+<div class="h-9 flex items-center px-4 bg-jb-gray-medium border-b border-jb-border gap-2 text-xs shrink-0">
+<span class="text-[#787878]">local-backups</span>
+<span class="material-symbols-outlined text-[14px]">chevron_right</span>
+<span class="text-white">archives</span>
+<div class="ml-auto flex items-center gap-3">
+<button class="flex items-center gap-1 bg-jb-accent text-white px-2 py-0.5 rounded text-[11px] font-bold">
+<span class="material-symbols-outlined text-[14px]">add</span> NEW ARCHIVE
+                </button>
+</div>
+</div>
+<div class="flex-1 overflow-x-auto custom-scrollbar">
+<table class="w-full text-left text-xs archive-table border-collapse">
+<thead class="sticky top-0 bg-jb-gray-medium z-10 border-b border-jb-border shadow-sm">
+<tr>
+<th class="px-4 py-2 font-medium text-[#787878] border-r border-jb-border/30">Name</th>
+<th class="px-4 py-2 font-medium text-[#787878] border-r border-jb-border/30">Date</th>
+<th class="px-4 py-2 font-medium text-[#787878] border-r border-jb-border/30">Size</th>
+<th class="px-4 py-2 font-medium text-[#787878]">Status</th>
+</tr>
+</thead>
+<tbody class="font-mono">
+<tr>
+<td class="px-4 py-2.5 text-white whitespace-nowrap">daily-2023-11-20-0001</td>
+<td class="px-4 py-2.5 whitespace-nowrap">2023-11-20 00:01</td>
+<td class="px-4 py-2.5 whitespace-nowrap">42.5 GB</td>
+<td class="px-4 py-2.5 whitespace-nowrap">
+<span class="flex items-center gap-1.5 text-status-success">
+<span class="size-1.5 rounded-full bg-status-success"></span> Verified
+                            </span>
+</td>
+</tr>
+<tr>
+<td class="px-4 py-2.5 text-white whitespace-nowrap">daily-2023-11-19-0001</td>
+<td class="px-4 py-2.5 whitespace-nowrap">2023-11-19 00:01</td>
+<td class="px-4 py-2.5 whitespace-nowrap">41.8 GB</td>
+<td class="px-4 py-2.5 whitespace-nowrap">
+<span class="flex items-center gap-1.5 text-status-success">
+<span class="size-1.5 rounded-full bg-status-success"></span> Verified
+                            </span>
+</td>
+</tr>
+<tr>
+<td class="px-4 py-2.5 text-white whitespace-nowrap">manual-patch-apply</td>
+<td class="px-4 py-2.5 whitespace-nowrap">2023-11-18 15:30</td>
+<td class="px-4 py-2.5 whitespace-nowrap">1.2 GB</td>
+<td class="px-4 py-2.5 whitespace-nowrap">
+<span class="flex items-center gap-1.5 text-status-warning">
+<span class="size-1.5 rounded-full bg-status-warning"></span> Unchecked
+                            </span>
+</td>
+</tr>
+<tr>
+<td class="px-4 py-2.5 text-white whitespace-nowrap">weekly-2023-W46</td>
+<td class="px-4 py-2.5 whitespace-nowrap">2023-11-12 02:00</td>
+<td class="px-4 py-2.5 whitespace-nowrap">284.1 GB</td>
+<td class="px-4 py-2.5 whitespace-nowrap">
+<span class="flex items-center gap-1.5 text-status-success">
+<span class="size-1.5 rounded-full bg-status-success"></span> Verified
+                            </span>
+</td>
+</tr>
+<tr class="opacity-50">
+<td class="px-4 py-2.5 text-white whitespace-nowrap italic">daily-2023-11-11-0001</td>
+<td class="px-4 py-2.5 whitespace-nowrap">2023-11-11 00:01</td>
+<td class="px-4 py-2.5 whitespace-nowrap">40.5 GB</td>
+<td class="px-4 py-2.5 whitespace-nowrap text-status-error">
+<span class="flex items-center gap-1.5">
+<span class="size-1.5 rounded-full bg-status-error"></span> Corrupted
+                            </span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<footer class="h-28 flex flex-col bg-[#1e1f22] border-t border-jb-border shrink-0">
+<div class="h-7 bg-jb-gray-medium flex items-center px-3 border-b border-jb-border justify-between">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-1 text-[11px] font-bold text-white border-b-2 border-jb-accent h-7 px-1">
+<span class="material-symbols-outlined text-[14px]">terminal</span> TERMINAL
+                    </div>
+<div class="flex items-center gap-1 text-[11px] text-[#787878] h-7 px-1">
+<span class="material-symbols-outlined text-[14px]">list_alt</span> OUTPUT
+                    </div>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[14px]">close</span>
+</div>
+</div>
+<div class="flex-1 p-3 font-mono text-[11px] overflow-y-auto custom-scrollbar bg-[#1e1f22]">
+<div class="flex gap-2">
+<span class="text-status-success font-bold">$</span>
+<span class="text-[#bcbec4]">borg list -r /mnt/backups/local-backups</span>
+</div>
+<div class="text-[#868a91] mt-1">
+                    [2023-11-21 10:45:01] Loading repository...<br/>
+                    [2023-11-21 10:45:02] Fetching archive list (5 entries found)<br/>
+                    [2023-11-21 10:45:02] Cache hit: 100%
+                </div>
+<div class="flex gap-2 mt-2">
+<span class="text-status-success font-bold">$</span>
+<span class="inline-block w-2 h-4 bg-[#bcbec4] animate-pulse align-middle"></span>
+</div>
+</div>
+</footer>
+</main>
+</div>
+<footer class="h-6 bg-jb-gray-medium border-t border-jb-border flex items-center justify-between px-3 text-[10px] text-[#787878] shrink-0">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px] text-status-success">check_circle</span>
+<span>All systems nominal</span>
+</div>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]">cloud_sync</span>
+<span>Last sync: 2m ago</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<span>UTF-8</span>
+<span>LF</span>
+<span class="text-white font-medium">Borg 1.2.4</span>
+</div>
+</footer>
+
+</body></html>

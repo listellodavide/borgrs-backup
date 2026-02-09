@@ -800,6 +800,7 @@ mod tests {
                 chunks: vec![],
                 symlink_target: None,
                 hardlink_target: None,
+                chunker_profile: crate::chunker::ChunkerProfile::Default,
             })
             .collect();
 
@@ -812,6 +813,9 @@ mod tests {
                 cmdline: vec![],
                 comment: None,
                 tags: None,
+                compression: None,
+                original_paths: None,
+                path_mapping: None,
             },
             items,
             stats: ArchiveStats::default(),

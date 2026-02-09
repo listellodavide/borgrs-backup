@@ -1,0 +1,94 @@
+import { Button, LineEdit, CheckBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { RestoreLogic } from "globals.slint";
+import { Theme } from "theme.slint";
+
+export component RestoreView inherits Rectangle {
+    background: Theme.crust;
+
+    VerticalLayout {
+        padding: 30px;
+        spacing: 20px;
+
+        // Header
+        Text {
+            text: "Restore Archive";
+            font-size: 24px;
+            font-weight: 700;
+            color: Theme.text;
+        }
+
+        Rectangle { height: 1px; background: Theme.border; }
+
+        // Archive Selection Display
+        VerticalLayout {
+            spacing: 5px;
+            Text { text: "Source Archive"; color: Theme.subtext; font-size: 12px; }
+            Rectangle {
+                background: Theme.mantle;
+                border-radius: 4px;
+                height: 35px;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    Text {
+                        text: RestoreLogic.selected_archive;
+                        vertical-alignment: center;
+                        color: Theme.secondary;
+                        font-family: "Monospace";
+                    }
+                }
+            }
+        }
+
+        // Destination Path
+        VerticalLayout {
+            spacing: 8px;
+            Text { text: "Restore Destination"; color: Theme.subtext; font-size: 12px; }
+            CheckBox {
+                text: "Restore to original locations";
+                checked <=> RestoreLogic.use_original_paths;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                LineEdit {
+                    text <=> RestoreLogic.restore_path;
+                    enabled: !RestoreLogic.use_original_paths;
+                    placeholder-text: RestoreLogic.use_original_paths ? "Using original backup paths (::defaults)" : "/path/to/restore/location";
+                }
+                Button {
+                    text: "Browse...";
+                    enabled: !RestoreLogic.use_original_paths;
+                    clicked => { RestoreLogic.browse_path() }
+                }
+            }
+        }
+
+        // Options
+        VerticalLayout {
+            spacing: 10px;
+            Text { text: "Options"; color: Theme.subtext; font-size: 12px; }
+            CheckBox {
+                text: "Dry Run (Simulate only)";
+                checked <=> RestoreLogic.dry_run;
+            }
+        }
+
+        Rectangle {} // Spacer
+
+        // Action Buttons
+        HorizontalLayout {
+            spacing: 15px;
+            alignment: end;
+
+            Button {
+                text: "Cancel";
+                clicked => { RestoreLogic.cancel() }
+            }
+
+            Button {
+                text: "Start Restore";
+                primary: true;
+                clicked => { RestoreLogic.start_restore() }
+            }
+        }
+    }
+}
