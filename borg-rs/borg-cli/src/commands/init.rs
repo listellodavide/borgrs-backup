@@ -155,8 +155,18 @@ pub fn normalize_webdav_url(
     {
         trimmed.to_string()
     } else {
-        format!("{}://{}", scheme, trimmed)
+        // Don't add scheme if it's an S3 URL
+        if trimmed.starts_with("s3://") {
+            trimmed.to_string()
+        } else {
+            format!("{}://{}", scheme, trimmed)
+        }
     };
+
+    // If it's an S3 URL, we don't need to do WebDAV normalization
+    if with_scheme.starts_with("s3://") {
+        return Ok(with_scheme);
+    }
 
     let mut url = url::Url::parse(&with_scheme)
         .map_err(|e| anyhow::anyhow!("Invalid WebDAV URL '{}': {}", with_scheme, e))?;

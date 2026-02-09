@@ -224,11 +224,11 @@ struct CreateArgs {
     exclude_nodump: bool,
 
     /// Add a comment to the archive
-    #[arg(long)]
+    #[arg(long, required = true)]
     comment: Option<String>,
 
     /// Add tags to the archive
-    #[arg(long, action = clap::ArgAction::Append)]
+    #[arg(long, action = clap::ArgAction::Append, required = true)]
     tags: Option<Vec<String>>,
 
     /// Timestamp for archive (ISO format or "now")
@@ -266,7 +266,8 @@ struct RestoreArgs {
     #[arg(required = true)]
     archive: String,
 
-    /// Paths to extract (all if not specified)
+    /// Paths to extract (all if not specified). Use '::original' to restore paths stored in archive.
+    /// Example: borg restore my-archive ::original
     paths: Vec<PathBuf>,
 
     /// WebDAV username
@@ -383,6 +384,14 @@ struct InfoArgs {
     /// JSON output
     #[arg(long)]
     json: bool,
+
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -390,6 +399,14 @@ struct DeleteArgs {
     /// Archives to delete
     #[arg(required = true)]
     archives: Vec<String>,
+
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 
     /// Don't ask for confirmation
     #[arg(short, long)]
@@ -442,6 +459,14 @@ struct PruneArgs {
     #[arg(long, short = 'a')]
     glob_archives: Option<String>,
 
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
+
     /// Don't actually delete
     #[arg(short = 'n', long)]
     dry_run: bool,
@@ -484,6 +509,14 @@ struct CheckArgs {
     /// Only check archives matching prefix
     #[arg(long)]
     prefix: Option<String>,
+
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -526,6 +559,14 @@ struct VerifyArgs {
     /// Only verify archives matching glob pattern
     #[arg(long, short = 'a')]
     glob_archives: Option<String>,
+
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -544,6 +585,14 @@ struct MountArgs {
     /// Run in foreground
     #[arg(short, long)]
     foreground: bool,
+
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -584,6 +633,14 @@ struct RenameArgs {
     /// New archive name
     #[arg(required = true)]
     new_name: String,
+
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -595,6 +652,14 @@ struct CompactArgs {
     /// Clean up partial/aborted transactions
     #[arg(long)]
     cleanup_commits: bool,
+
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -640,6 +705,14 @@ struct ExportArgs {
     /// Tar format (auto, PAX, GNU, USTAR)
     #[arg(long, default_value = "auto")]
     tar_format: String,
+
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -651,6 +724,14 @@ struct ImportArgs {
     /// Input tar file (stdin if not specified)
     #[arg(short, long)]
     input: Option<PathBuf>,
+
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
+
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 }
 
 #[derive(Args, Debug)]

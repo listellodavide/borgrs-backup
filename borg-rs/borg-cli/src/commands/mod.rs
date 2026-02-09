@@ -23,7 +23,7 @@ pub mod benchmark;
 
 use anyhow::{Context, Result};
 use borg_core::repository::Repository;
-use borg_core::storage::{parse_storage_config, build_operator};
+use borg_core::storage::{parse_storage_config, build_operator, StorageConfig};
 
 /// Get repository path from CLI args or environment
 pub fn get_repo_path(cli: &crate::Cli) -> Result<String> {
@@ -75,26 +75,27 @@ pub async fn get_passphrase(prompt: &str) -> Result<String> {
 
 /// Open repository with passphrase handling
 pub async fn open_repository(repo_str: &str) -> Result<Repository> {
-    let config = parse_storage_config(repo_str)?;
+    let mut config = parse_storage_config(repo_str)?;
 
     // Inject S3 credentials from env vars if they were set by main.rs
-    // Note: main.rs sets env vars from CLI args, so we can just rely on env vars here
-    // or we could pass the CLI struct down. Since we don't have the CLI struct here easily,
-    // and main.rs already sets the env vars, we can rely on build_operator picking them up
-    // via env vars, OR we can explicitly check env vars here and update the config.
-    //
-    // However, build_operator in storage.rs ALREADY checks env vars for access/secret keys.
-    // It also checks S3_SESSION_TOKEN / AWS_SESSION_TOKEN.
-    // So we don't strictly need to modify the config object here unless we want to be explicit.
-    //
-    // But wait, parse_storage_config might return a config with None for credentials.
-    // If we want to ensure the Operator uses the credentials, we rely on build_operator's fallback logic.
-    //
-    // Let's double check storage.rs build_operator logic.
-    // It checks config fields first, then env vars.
-    // So if config fields are None, it uses env vars.
-    // parse_storage_config returns None for credentials unless they are in the URL.
-    // So we are good.
+    // This ensures that even if the URL doesn't have credentials, we use the ones from CLI/env
+    if let StorageConfig::S3 { access_key, secret_key, session_token, .. } = &mut config {
+        if access_key.is_none() {
+            if let Ok(ak) = std::env::var("S3_ACCESS_KEY") {
+                *access_key = Some(ak);
+            }
+        }
+        if secret_key.is_none() {
+            if let Ok(sk) = std::env::var("S3_SECRET_KEY") {
+                *secret_key = Some(sk);
+            }
+        }
+        if session_token.is_none() {
+            if let Ok(tok) = std::env::var("S3_SESSION_TOKEN") {
+                *session_token = Some(tok);
+            }
+        }
+    }
 
     let op = build_operator(config)?;
     

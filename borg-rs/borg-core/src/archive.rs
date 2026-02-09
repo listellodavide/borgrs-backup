@@ -204,6 +204,8 @@ pub struct ArchiveMetadata {
     pub comment: Option<String>,
     /// Tags (optional)
     pub tags: Option<Vec<String>>,
+    /// Original paths backed up
+    pub original_paths: Option<Vec<PathBuf>>,
 }
 
 /// A complete archive containing items and metadata
@@ -331,6 +333,7 @@ impl<'a> ArchiveCreator<'a> {
             cmdline: std::env::args().collect(),
             comment,
             tags,
+            original_paths: Some(paths.to_vec()),
         };
 
         let mut items = Vec::new();
@@ -782,6 +785,7 @@ impl<'a> ArchiveRestorer<'a> {
                     cmdline: v1.metadata.cmdline,
                     comment: None,
                     tags: None,
+                    original_paths: None,
                 },
                 items: v1.items.into_iter().map(convert_item).collect(),
                 stats: v1.stats,
@@ -978,6 +982,7 @@ mod tests {
             cmdline: vec!["borg".to_string(), "create".to_string()],
             comment: Some("test comment".to_string()),
             tags: Some(vec!["tag1".to_string(), "tag2".to_string()]),
+            original_paths: Some(vec![PathBuf::from("/tmp/test")]),
         };
 
         let archive = Archive {
@@ -998,6 +1003,7 @@ mod tests {
         assert_eq!(decoded.items[0].symlink_target, None);
         assert_eq!(decoded.metadata.tags, Some(vec!["tag1".to_string(), "tag2".to_string()]));
         assert_eq!(decoded.items[0].chunker_profile, ChunkerProfile::Size8M);
+        assert_eq!(decoded.metadata.original_paths, Some(vec![PathBuf::from("/tmp/test")]));
     }
 
     #[tokio::test]
