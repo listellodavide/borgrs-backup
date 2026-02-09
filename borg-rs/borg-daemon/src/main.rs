@@ -294,36 +294,70 @@ async fn wait_for_sigterm() {
 /// Run the backup scheduler
 async fn run_scheduler(state: Arc<DaemonState>) {
     let mut shutdown_rx = state.shutdown_tx.subscribe();
-    
+    let mut last_check = chrono::Utc::now();
+
     loop {
-        // Check for next scheduled job
-        let next_job = {
-            let scheduler = state.scheduler.read().await;
-            scheduler.next_job()
-        };
+        // Check every 30 seconds for pending jobs or updates
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                let now = chrono::Utc::now();
 
-        if let Some((job_name, run_time)) = next_job {
-            let delay = run_time - chrono::Utc::now();
-            let delay_duration = delay.to_std().unwrap_or(std::time::Duration::ZERO);
+                // Check if configuration has been reloaded
+                // (This would be set by the control server when reload is called)
 
-            tokio::select! {
-                _ = tokio::time::sleep(delay_duration) => {
-                    // Execute the job
-                    if let Err(e) = execute_job(&state, job_name.as_str()).await {
-                        error!("Job '{}' failed: {}", job_name, e);
+                // Get next job
+                let next_job = {
+                    let scheduler = state.scheduler.read().await;
+                    scheduler.next_job()
+                };
+
+                if let Some((job_name, run_time)) = next_job {
+                    let delay = run_time - now;
+
+                    // If the job should have run or is very close (within 60 seconds), execute it
+                    if delay.num_seconds() <= 0 {
+                        // Execute job and reschedule
+                        info!("Executing scheduled job: {}", job_name);
+                        if let Err(e) = execute_job(&state, job_name.as_str()).await {
+                            error!("Job '{}' failed: {}", job_name, e);
+                            // Mark as failed in scheduler for missed run tracking
+                            {
+                                let mut scheduler = state.scheduler.write().await;
+                                scheduler.job_failed(&job_name);
+                            }
+                        } else {
+                            // Reschedule the job
+                            let mut scheduler = state.scheduler.write().await;
+                            scheduler.job_completed(&job_name);
+                        }
+                    } else if delay.num_seconds() <= 60 {
+                        // Job is coming up soon, sleep until it's time
+                        let delay_duration = delay.to_std().unwrap_or(std::time::Duration::ZERO);
+                        tokio::select! {
+                            _ = tokio::time::sleep(delay_duration) => {
+                                info!("Executing scheduled job: {}", job_name);
+                                if let Err(e) = execute_job(&state, job_name.as_str()).await {
+                                    error!("Job '{}' failed: {}", job_name, e);
+                                    let mut scheduler = state.scheduler.write().await;
+                                    scheduler.job_failed(&job_name);
+                                } else {
+                                    let mut scheduler = state.scheduler.write().await;
+                                    scheduler.job_completed(&job_name);
+                                }
+                            }
+                            _ = shutdown_rx.recv() => {
+                                break;
+                            }
+                        }
                     }
-                }
-                _ = shutdown_rx.recv() => {
-                    break;
+                    // If job is more than 60 seconds away, loop again and check after 30 seconds
+                } else {
+                    debug!("No jobs scheduled");
                 }
             }
-        } else {
-            // No jobs scheduled, wait for a bit
-            tokio::select! {
-                _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {}
-                _ = shutdown_rx.recv() => {
-                    break;
-                }
+            _ = shutdown_rx.recv() => {
+                info!("Scheduler shutting down");
+                break;
             }
         }
     }

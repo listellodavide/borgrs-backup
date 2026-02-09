@@ -1,5 +1,5 @@
-import { AppState, ArchiveEntry, RepoItem, DashboardLogic, InitWizardLogic, RestoreLogic, NewArchiveWizardLogic, SchedulerLogic, ArchiveContentLogic } from "globals.slint";
-export { AppState, ArchiveEntry, RepoItem, DashboardLogic, InitWizardLogic, RestoreLogic, NewArchiveWizardLogic, SchedulerLogic, ArchiveContentLogic }
+import { AppState, ArchiveEntry, RepoItem, DashboardLogic, InitWizardLogic, RestoreLogic, NewArchiveWizardLogic, SchedulerLogic, ArchiveContentLogic, ArchiveFilesLogic } from "globals.slint";
+export { AppState, ArchiveEntry, RepoItem, DashboardLogic, InitWizardLogic, RestoreLogic, NewArchiveWizardLogic, SchedulerLogic, ArchiveContentLogic, ArchiveFilesLogic }
 import { Sidebar } from "components/sidebar.slint";
 import { DashboardView } from "dashboard.slint";
 import { InitWizardView } from "init_wizard.slint";
@@ -8,6 +8,7 @@ import { NewArchiveWizardView } from "new_archive_wizard.slint";
 import { PasswordDialog } from "components/password_dialog.slint";
 import { SchedulerView } from "scheduler.slint";
 import { ArchiveContentView } from "archive_content.slint";
+import { ArchiveFilesDialog } from "archive_files_dialog.slint";
 
 // --- Logic Globals ---
 // Note: Logic globals are now defined in globals.slint for consistency
@@ -33,6 +34,11 @@ export component MainWindow inherits Window {
 
             if (AppState.show_password_dialog) : PasswordDialog {}
             if (ArchiveContentLogic.show_dialog) : ArchiveContentView {}
+            if (ArchiveFilesLogic.show_archive_files_dialog) : archive-files-dialog := ArchiveFilesDialog {
+                close-requested => {
+                    ArchiveFilesLogic.show_archive_files_dialog = false;
+                }
+            }
         }
     }
 }

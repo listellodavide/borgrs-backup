@@ -30,6 +30,7 @@ pub struct ArchiveBookmark {
 pub enum ScheduleType {
     Daily,
     Weekly,
+    Monthly,
     Manual,
 }
 
@@ -37,6 +38,7 @@ pub enum ScheduleType {
 pub struct BackupSchedule {
     pub schedule_type: ScheduleType,
     pub weekday: i32, // 0 = Mon … 6 = Sun
+    pub day_of_month: i32, // 1-31 for monthly
     pub hour: i32,
     pub minute: i32,
     pub run_on_boot_if_missed: bool,
@@ -44,6 +46,7 @@ pub struct BackupSchedule {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledTask {
+    pub task_name: String, // Auto-generated: repo_archive_frequency_hh_mm
     pub repo_name: String,
     pub archive_name: String,
     pub schedule: BackupSchedule,

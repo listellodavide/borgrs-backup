@@ -1,23 +1,9 @@
 import { CheckBox, ComboBox, GroupBox, SpinBox, ListView, Button } from "std-widgets.slint";
 import { Theme } from "./theme.slint";
-import { SchedulerLogic, ScheduleType, BackupSchedule, ScheduledTask, DashboardLogic, ArchiveFilesDialogGlobal, ArchiveFilesLogic } from "./globals.slint";
-import { ArchiveFilesDialog } from "./archive_files_dialog.slint";
+import { SchedulerLogic, ScheduleType, BackupSchedule, ScheduledTask } from "./globals.slint";
 
 export component SchedulerView inherits Rectangle {
     background: Theme.background;
-
-    dialog := ArchiveFilesDialog {
-        file-list: ArchiveFilesLogic.file-list;
-        search-term <=> ArchiveFilesLogic.search-term;
-        use-regex <=> ArchiveFilesLogic.use-regex;
-        request-files(archive-name) => {
-            ArchiveFilesLogic.request-files(archive-name, self.search-term, self.use-regex);
-        }
-    }
-
-    init => {
-        ArchiveFilesDialogGlobal.dialog = dialog;
-    }
 
     HorizontalLayout {
         padding: 20px;
@@ -35,8 +21,10 @@ export component SchedulerView inherits Rectangle {
                     TouchArea {
                         clicked => { SchedulerLogic.selected_task_index = i; }
                     }
-                    padding: 10px;
-                    Text { text: task.repo_name + " - " + task.archive_name; }
+                    HorizontalLayout {
+                        padding: 10px;
+                        Text { text: task.repo_name + " - " + task.archive_name; }
+                    }
                 }
             }
             Button { text: "New Task"; clicked => { SchedulerLogic.new_task() } }
@@ -64,7 +52,7 @@ export component SchedulerView inherits Rectangle {
             if selected_task.schedule.schedule_type == ScheduleType.Weekly: ComboBox {
                 model: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
                 current-index: selected_task.schedule.weekday;
-                selected(value) => { 
+                selected(value) => {
                     if (value == "Monday") { selected_task.schedule.weekday = 0; }
                     else if (value == "Tuesday") { selected_task.schedule.weekday = 1; }
                     else if (value == "Wednesday") { selected_task.schedule.weekday = 2; }

@@ -122,11 +122,13 @@ export component NewArchiveWizardView inherits Rectangle {
                         height: 35px;
                         background: Theme.surface;
                         border-radius: 4px;
-                        Text {
+                        HorizontalLayout {
                             padding-left: 10px;
-                            text: "backup_managed_name (auto-generated)";
-                            color: Theme.text-muted;
-                            vertical-alignment: center;
+                            Text {
+                                text: "backup_managed_name (auto-generated)";
+                                color: Theme.text-muted;
+                                vertical-alignment: center;
+                            }
                         }
                     }
                 }

@@ -6,6 +6,7 @@ pub mod compression;
 pub mod crypto;
 pub mod error;
 pub mod exclusion;
+pub mod lock;
 pub mod metadata;
 pub mod recovery;
 pub mod remote;

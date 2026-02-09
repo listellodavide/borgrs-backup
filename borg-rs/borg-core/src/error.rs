@@ -20,6 +20,9 @@ pub enum BorgError {
     #[error("Repository locked by another process")]
     RepositoryLocked,
 
+    #[error("Lock error: {0}")]
+    LockError(String),
+
     #[error("Archive not found: {name}")]
     ArchiveNotFound { name: String },
 

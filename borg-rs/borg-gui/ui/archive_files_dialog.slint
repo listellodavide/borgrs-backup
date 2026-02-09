@@ -1,42 +1,89 @@
 import { Button, CheckBox, LineEdit, ListView, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
 
 export component ArchiveFilesDialog inherits Dialog {
     title: "Archive Contents";
-    width: 800px;
-    height: 600px;
+    width: 900px;
+    height: 700px;
 
-    callback request-files(string);
+    callback request-files(string, string, bool);
+    callback close-requested();
     in-out property <[string]> file-list;
     in-out property <bool> use-regex: false;
     in-out property <string> search-term: "";
 
-    VerticalLayout {
-        spacing: 10px;
-        padding: 10px;
+    // Custom background and styling for the dialog
+    Rectangle {
+        background: #004282; // Dark cerulean background
 
-        HorizontalLayout {
-            LineEdit {
-                placeholder-text: "Search files...";
-                text <=> root.search-term;
-            }
-            CheckBox {
-                text: "Regex";
-                checked <=> root.use-regex;
-            }
-        }
+        VerticalLayout {
+            spacing: 15px;
+            padding: 20px;
 
-        ScrollView {
-            ListView {
-                for file in root.file-list : Text {
-                    text: file;
+            // Title/Header
+            Text {
+                text: "Archive Contents";
+                font-size: 18px;
+                font-weight: 700;
+                color: Theme.primary;
+            }
+
+            // Search controls
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: space-between;
+
+                LineEdit {
+                    placeholder-text: "Search files (use .* for all files with regex enabled)...";
+                    text <=> root.search-term;
+                }
+
+                CheckBox {
+                    text: "Regex";
+                    checked <=> root.use-regex;
                 }
             }
-        }
 
-        HorizontalLayout {
-            Button {
-                text: "Close";
-                clicked => { root.hide() }
+            // File list with scroll view
+            Rectangle {
+                background: Theme.mantle;
+                border-color: Theme.primary;
+                border-width: 1px;
+                border-radius: 4px;
+
+                ScrollView {
+                    ListView {
+                        for file in root.file-list : Rectangle {
+                            height: 24px;
+                            background: touch.has-hover ? Theme.border_color : transparent;
+
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                Text {
+                                    text: file;
+                                    color: Theme.text;
+                                    vertical-alignment: center;
+                                    font-size: 12px;
+                                }
+                            }
+
+                            touch := TouchArea {}
+                        }
+                    }
+                }
+            }
+
+            // Close button
+            HorizontalLayout {
+                alignment: end;
+                spacing: 10px;
+
+                Button {
+                    text: "Close";
+                    clicked => {
+                        root.close-requested();
+                    }
+                }
             }
         }
     }

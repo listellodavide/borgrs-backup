@@ -1,5 +1,6 @@
 use crate::archive::{ArchiveCreator, BackupProgress};
 use crate::repository::Repository;
+use crate::lock::RepositoryLock;
 use chrono::{Datelike, Local, Timelike};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -35,6 +36,7 @@ impl BackupProgress for SchedulerBackupProgress {
 pub enum ScheduleType {
     Daily,
     Weekly,
+    Monthly,
     Manual,
 }
 
@@ -42,6 +44,7 @@ pub enum ScheduleType {
 pub struct BackupSchedule {
     pub schedule_type: ScheduleType,
     pub weekday: u32, // 0 = Mon … 6 = Sun
+    pub day_of_month: u32, // 1-31 for monthly
     pub hour: u32,
     pub minute: u32,
     pub run_on_boot_if_missed: bool,
@@ -62,6 +65,7 @@ pub struct ScheduledTask {
 pub struct Scheduler {
     tasks: Arc<Mutex<Vec<ScheduledTask>>>,
     reporter: Option<Arc<dyn SchedulerReporter>>,
+    queue: Arc<Mutex<Vec<ScheduledTask>>>,
 }
 
 impl Scheduler {
@@ -69,6 +73,7 @@ impl Scheduler {
         Self {
             tasks: Arc::new(Mutex::new(tasks)),
             reporter: None,
+            queue: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -90,7 +95,16 @@ impl Scheduler {
             }
 
             drop(tasks);
-            sleep(Duration::from_secs(60)).await; // Check every minute
+
+            // Process queue
+            let mut queue = self.queue.lock().await;
+            if !queue.is_empty() {
+                let task = queue.remove(0);
+                self.run_task(task).await;
+            }
+            drop(queue);
+
+            sleep(Duration::from_secs(30)).await; // Check every 30 seconds
         }
     }
 
@@ -109,6 +123,7 @@ impl Scheduler {
         match schedule.schedule_type {
             ScheduleType::Daily => true,
             ScheduleType::Weekly => now.weekday().num_days_from_monday() == schedule.weekday,
+            ScheduleType::Monthly => now.day() == schedule.day_of_month as u32,
             ScheduleType::Manual => false,
         }
     }
@@ -126,6 +141,7 @@ impl Scheduler {
         let prefix = match task.schedule.schedule_type {
             ScheduleType::Daily => "daily",
             ScheduleType::Weekly => "weekly",
+            ScheduleType::Monthly => "monthly",
             ScheduleType::Manual => "manual",
         };
         
@@ -134,6 +150,21 @@ impl Scheduler {
         task.archive_name = format!("{}-{}", prefix, timestamp);
 
         let password = self.reporter.as_ref().and_then(|r| r.get_password(&task.repo_path));
+
+        let repo_path_buf = std::path::PathBuf::from(&task.repo_path);
+        let mut lock = RepositoryLock::new(&repo_path_buf);
+        if let Err(e) = lock.acquire("scheduled_task", &task.archive_name) {
+            let err_msg = format!("Failed to acquire lock: {}", e);
+            if let Some(reporter) = &self.reporter {
+                reporter.on_task_error(&task, err_msg);
+            } else {
+                eprintln!("{}", err_msg);
+            }
+            // Add to queue
+            let mut queue = self.queue.lock().await;
+            queue.push(task);
+            return;
+        }
 
         let mut repo = match Repository::open(
             crate::storage::build_operator(crate::storage::StorageConfig::Local { path: task.repo_path.clone().into() }).unwrap(),

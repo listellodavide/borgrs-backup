@@ -4,6 +4,7 @@ use borg_core::repository::RepoDescriptor;
 use borg_core::storage::StorageConfig;
 use borg_core::storage::build_operator;
 use borg_core::repository::Repository;
+use borg_core::lock::RepositoryLock;
 
 pub use borg_core::archive::{BackupProgress, RestoreProgress};
 use borg_core::archive::{ArchiveCreator, ArchiveRestorer};
@@ -48,6 +49,11 @@ pub async fn create_archive(
     tags: Option<Vec<String>>,
     progress: Option<Box<dyn BackupProgress>>,
 ) -> Result<CreateArchiveResult> {
+    let repo_path_buf = PathBuf::from(repo_path);
+    let mut lock = RepositoryLock::new(&repo_path_buf);
+    lock.acquire("create_archive", archive_name)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
     let storage = if repo_path.starts_with("/") || repo_path.contains(":\\") {
         StorageConfig::Local { path: PathBuf::from(repo_path) }
     } else {

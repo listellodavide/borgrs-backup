@@ -2,8 +2,8 @@ use crate::app_state::BorgAppState as RustAppState;
 use crate::app_state::RepoBookmark;
 use crate::commands;
 use crate::commands::{BackupProgress, RestoreProgress};
-use crate::{ArchiveContentEntry, ArchiveContentLogic, ArchiveEntry, ArchiveFilesLogic};
-use slint::{ComponentHandle, Model, SharedString, VecModel};
+use crate::{ArchiveContentLogic, ArchiveEntry, ArchiveFilesLogic};
+use slint::{ComponentHandle, Model, SharedString};
 use std::path::Path;
 use super::scheduler_bridge;
 
@@ -148,12 +148,8 @@ impl RestoreProgress for GuiRestoreProgress {
     }
 }
 
-use slint::ComponentHandle;
-use slint::Model;
-use slint::SharedString;
 use std::sync::{Arc, Mutex};
 use super::{MainWindow, AppState, DashboardLogic, InitWizardLogic, RestoreLogic, RepoItem, NewArchiveWizardLogic};
-use crate::{ArchiveEntry, ArchiveContentLogic, ArchiveContentEntry};
 
 pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
     let window_weak = window.as_weak();
@@ -187,7 +183,7 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
     app_state.on_password_dialog_submitted({
         let window_weak = window_weak.clone();
         let state_clone = state.clone();
-        move |password| {
+        move |password: SharedString| {
             if let Some(window) = window_weak.upgrade() {
                 window.global::<AppState>().set_show_password_dialog(false);
                 
@@ -279,7 +275,7 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
 
                 // Determine archive name
                 let name = if bm.use_custom_name {
-                    bm.archive_name.unwrap_or_else(|| crate::commands::generate_managed_archive_name())
+                    bm.archive_name.clone().unwrap_or_else(|| crate::commands::generate_managed_archive_name())
                 } else {
                     crate::commands::generate_managed_archive_name()
                 };
@@ -339,9 +335,11 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                                     dashboard.set_terminal_text(format!("Backup '{}' completed successfully.", name).into());
                                 }
                                 Err(e) => {
-                                    // Check if it's an invalid passphrase error
                                     let err_msg = e.to_string();
-                                    if err_msg.contains("Invalid passphrase") || err_msg.contains("Passphrase required") {
+                                    if err_msg.contains("Repository is locked") {
+                                        w.global::<DashboardLogic>().set_terminal_text(format!("Task queued: {}", err_msg).into());
+                                        // Here we would add the task to a queue
+                                    } else if err_msg.contains("Invalid passphrase") || err_msg.contains("Passphrase required") {
                                         w.global::<AppState>().set_pending_auth_action(SharedString::from("backup"));
                                         w.global::<AppState>().set_show_password_dialog(true);
                                         w.global::<AppState>().set_password_dialog_message(format!("Authentication failed for {}. Please enter passphrase:", repo_path_clone).into());
@@ -418,11 +416,11 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
 
     dashboard.on_open_restore({
         let window_weak = window_weak.clone();
-        move |archive| {
+        move |entry| {
             if let Some(window) = window_weak.upgrade() {
                 window.global::<AppState>().set_current_view(SharedString::from("restore"));
                 let restore = window.global::<RestoreLogic>();
-                restore.set_selected_archive(archive.name);
+                restore.set_selected_archive(entry.name);
                 restore.set_use_original_paths(true);
                 restore.set_restore_path(SharedString::from(""));
             }
@@ -858,7 +856,7 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
     archive_files_logic.on_request_files({
         let window_weak = window_weak.clone();
         let state_clone = state.clone();
-        move |archive_name, search_term, use_regex| {
+        move |archive_name: SharedString, search_term: SharedString, use_regex: bool| {
             if let Some(window) = window_weak.upgrade() {
                 let dashboard = window.global::<DashboardLogic>();
                 let active_index = dashboard.get_active_repo_index();
@@ -913,7 +911,7 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                                                 files.retain(|f| re.is_match(f));
                                             }
                                         } else {
-                                            files.retain(|f| f.contains(&search_term));
+                                            files.retain(|f| f.contains(search_term.as_str()));
                                         }
                                     }
                                     
@@ -933,6 +931,20 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                         }
                     });
                 });
+            }
+        }
+    });
+
+    // This is the handler for the double click
+    let dash = window.global::<DashboardLogic>();
+    dash.on_archive_double_clicked({
+        let window_weak = window_weak.clone();
+        move |entry| {
+            if let Some(window) = window_weak.upgrade() {
+                let files_logic = window.global::<ArchiveFilesLogic>();
+                files_logic.set_current_archive_name(entry.name.clone());
+                files_logic.invoke_request_files(entry.name, "".into(), false);
+                files_logic.set_show_archive_files_dialog(true);
             }
         }
     });

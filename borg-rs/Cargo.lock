@@ -1143,6 +1143,7 @@ dependencies = [
  "borg-core",
  "chrono",
  "keyring",
+ "regex",
  "rfd",
  "serde",
  "serde_json",

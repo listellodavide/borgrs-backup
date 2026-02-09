@@ -4,6 +4,7 @@ pub mod app_state;
 pub mod commands;
 pub mod bridge;
 pub mod scheduler_bridge;
+pub mod task_runner;
 
 use std::sync::{Arc, Mutex};
 use app_state::BorgAppState as RustAppState;
@@ -70,7 +71,11 @@ impl SchedulerReporter for GuiSchedulerReporter {
                     window.global::<AppState>().set_is_processing(false);
                     let dash = window.global::<DashboardLogic>();
                     dash.set_is_scheduled_backup_running(false);
-                    dash.set_terminal_text(format!("Scheduled task failed for {}: {}", repo_path, error).into());
+                    if error.contains("Failed to acquire lock") {
+                        dash.set_terminal_text(format!("Task for {} is queued, waiting for lock.", repo_path).into());
+                    } else {
+                        dash.set_terminal_text(format!("Scheduled task failed for {}: {}", repo_path, error).into());
+                    }
                 }
             }
         });
@@ -151,9 +156,11 @@ async fn main() -> anyhow::Result<()> {
                     schedule_type: match task.schedule.schedule_type {
                         app_state::ScheduleType::Daily => CoreScheduleType::Daily,
                         app_state::ScheduleType::Weekly => CoreScheduleType::Weekly,
+                        app_state::ScheduleType::Monthly => CoreScheduleType::Monthly,
                         app_state::ScheduleType::Manual => CoreScheduleType::Manual,
                     },
                     weekday: task.schedule.weekday as u32,
+                    day_of_month: task.schedule.day_of_month as u32,
                     hour: task.schedule.hour as u32,
                     minute: task.schedule.minute as u32,
                     run_on_boot_if_missed: task.schedule.run_on_boot_if_missed,
@@ -172,6 +179,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     bridge::init_bridge(&main_window, rust_app_state.clone());
+    scheduler_bridge::init_scheduler_bridge(&main_window, rust_app_state.clone());
 
     main_window.run()?;
     Ok(())
