@@ -1,0 +1,43 @@
+import { Button, CheckBox, LineEdit, ListView, ScrollView } from "std-widgets.slint";
+
+export component ArchiveFilesDialog inherits Dialog {
+    title: "Archive Contents";
+    width: 800px;
+    height: 600px;
+
+    callback request-files(string);
+    in-out property <[string]> file-list;
+    in-out property <bool> use-regex: false;
+    in-out property <string> search-term: "";
+
+    VerticalLayout {
+        spacing: 10px;
+        padding: 10px;
+
+        HorizontalLayout {
+            LineEdit {
+                placeholder-text: "Search files...";
+                text <=> root.search-term;
+            }
+            CheckBox {
+                text: "Regex";
+                checked <=> root.use-regex;
+            }
+        }
+
+        ScrollView {
+            ListView {
+                for file in root.file-list : Text {
+                    text: file;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            Button {
+                text: "Close";
+                clicked => { root.hide() }
+            }
+        }
+    }
+}

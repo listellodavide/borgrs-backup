@@ -3,7 +3,7 @@ import { DashboardLogic, ArchiveEntry, AppState } from "globals.slint";
 import { Theme, CyberButton } from "theme.slint";
 
 component ToolIcon inherits Rectangle {
-    in property <string> icon_text;
+    in property <image> icon;
     in property <bool> active;
     callback clicked <=> touch.clicked;
 
@@ -20,10 +20,11 @@ component ToolIcon inherits Rectangle {
 
     touch := TouchArea {}
 
-    Text {
-        text: root.icon_text;
-        font-size: 18px;
-        color: active ? Theme.text : Theme.text-muted;
+    Image {
+        source: root.icon;
+        width: 18px;
+        height: 18px;
+        colorize: active ? Theme.text : Theme.text-muted;
     }
 }
 
@@ -42,8 +43,8 @@ export component DashboardView inherits Rectangle {
                 Text { text: "View"; color: Theme.text-muted; vertical-alignment: center; }
                 Text { text: "Repositories"; color: Theme.primary; vertical-alignment: center; font-weight: 700; }
                 Rectangle {} // Spacer
-                Text { text: "🔍"; vertical-alignment: center; color: Theme.text-muted; }
-                Text { text: "⚙️"; vertical-alignment: center; color: Theme.text-muted; }
+                Image { source: @image-url("../assets/search.svg"); width: 16px; height: 16px; colorize: Theme.text-muted; }
+                Image { source: @image-url("../assets/settings.svg"); width: 16px; height: 16px; colorize: Theme.text-muted; }
                 Rectangle { width: 10px; }
             }
         }
@@ -63,12 +64,12 @@ export component DashboardView inherits Rectangle {
 
                 VerticalLayout {
                     padding-top: 10px;
-                    ToolIcon { icon_text: "📂"; active: true; }
-                    ToolIcon { icon_text: "☁️"; active: false; }
-                    ToolIcon { icon_text: "🖥️"; active: false; }
+                    ToolIcon { icon: @image-url("../assets/folder.svg"); active: true; }
+                    ToolIcon { icon: @image-url("../assets/cloud.svg"); active: false; }
+                    ToolIcon { icon: @image-url("../assets/monitor.svg"); active: false; }
                     Rectangle {} // Spacer
-                    ToolIcon { icon_text: "💾"; active: false; }
-                    ToolIcon { icon_text: "🕒"; active: false; }
+                    ToolIcon { icon: @image-url("../assets/save.svg"); active: false; }
+                    ToolIcon { icon: @image-url("../assets/clock.svg"); active: false; }
                 }
             }
 
@@ -88,8 +89,8 @@ export component DashboardView inherits Rectangle {
 
                         CyberButton {
                             text: "BACKUP NOW";
-                            border-color: DashboardLogic.has_pending_archive ? #ff9800 : Theme.primary;
-                            background: self.pressed ? (DashboardLogic.has_pending_archive ? #ef6c00 : Theme.primary) : (self.hovered ? (DashboardLogic.has_pending_archive ? #ffb74d : Theme.primary_dim) : transparent);
+                            border-color: DashboardLogic.is_scheduled_backup_running || DashboardLogic.has_pending_archive ? #ff9800 : Theme.primary;
+                            background: self.pressed ? (DashboardLogic.is_scheduled_backup_running || DashboardLogic.has_pending_archive ? #ef6c00 : Theme.primary) : (self.hovered ? (DashboardLogic.is_scheduled_backup_running || DashboardLogic.has_pending_archive ? #ffb74d : Theme.primary_dim) : transparent);
                             // color is handled inside CyberButton, we might need to tweak it there or just use the defaults
                             clicked => { DashboardLogic.backup_clicked() }
                         }
@@ -114,8 +115,8 @@ export component DashboardView inherits Rectangle {
                     background: Theme.surface;
                     HorizontalLayout {
                         padding-left: 20px;
-                        Text { text: "Name"; width: 300px; color: Theme.text-muted; font-size: 13px; vertical-alignment: center; }
-                        Text { text: "Date"; color: Theme.text-muted; font-size: 13px; vertical-alignment: center; }
+                        Text { text: "Name"; color: Theme.text-muted; font-size: 13px; vertical-alignment: center; }
+                        Text { text: "Date"; width: 150px; color: Theme.text-muted; font-size: 13px; vertical-alignment: center; }
                         Rectangle {}
                     }
                 }
@@ -126,29 +127,50 @@ export component DashboardView inherits Rectangle {
                         padding: 5px;
                         
                         // Pending Archive Status Box
-                        if (DashboardLogic.has_pending_archive) : Rectangle {
+                        if (DashboardLogic.has_pending_archive || DashboardLogic.is_scheduled_backup_running) : Rectangle {
                             height: 80px;
                             background: Theme.surface;
                             border-width: 2px;
-                            border-color: #137fec; // Blue border
+                            border-color: DashboardLogic.is_scheduled_backup_running ? #ff9800 : #137fec; // Orange if scheduled, Blue if pending
                             border-radius: 4px;
                             VerticalLayout {
                                 padding: 10px;
                                 spacing: 4px;
                                 Text {
-                                    text: "Archive is now ready to execute for folder:";
-                                    color: #137fec;
+                                    text: DashboardLogic.is_scheduled_backup_running ? "Scheduled archive backup is running on folder:" : "Archive is now ready to execute for folder:";
+                                    color: DashboardLogic.is_scheduled_backup_running ? #ff9800 : #137fec;
                                     font-weight: 700;
                                     font-size: 14px;
                                 }
                                 ScrollView {
                                     HorizontalLayout {
                                         spacing: 10px;
-                                        for path in DashboardLogic.pending_archive_paths : Text {
-                                            text: "📁 " + path;
-                                            color: Theme.text;
-                                            font-size: 12px;
-                                            font-family: "JetBrains Mono";
+                                        if (DashboardLogic.is_scheduled_backup_running) : HorizontalLayout {
+                                            spacing: 5px;
+                                            Image { source: @image-url("../assets/folder.svg"); width: 12px; height: 12px; colorize: Theme.text; }
+                                            Text {
+                                                text: DashboardLogic.scheduled_backup_repo_path;
+                                                color: Theme.text;
+                                                font-size: 12px;
+                                                font-family: "JetBrains Mono";
+                                                overflow: elide;
+                                            }
+                                        }
+                                        if (!DashboardLogic.is_scheduled_backup_running) : Rectangle {
+                                            HorizontalLayout {
+                                                spacing: 10px;
+                                                for path in DashboardLogic.pending_archive_paths : HorizontalLayout {
+                                                    spacing: 5px;
+                                                    Image { source: @image-url("../assets/folder.svg"); width: 12px; height: 12px; colorize: Theme.text; }
+                                                    Text {
+                                                        text: path;
+                                                        color: Theme.text;
+                                                        font-size: 12px;
+                                                        font-family: "JetBrains Mono";
+                                                        overflow: elide;
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -158,14 +180,16 @@ export component DashboardView inherits Rectangle {
                         for entry in DashboardLogic.archives: Rectangle {
                             height: 60px;
                             background: touch_row.has-hover ? Theme.surface : transparent;
-                            touch_row := TouchArea {}
+                            touch_row := TouchArea {
+                                double-clicked => { DashboardLogic.archive_double_clicked(entry) }
+                            }
                             VerticalLayout {
                                 padding-left: 15px;
                                 padding-right: 15px;
                                 alignment: center;
                                 HorizontalLayout {
-                                    Text { text: entry.name; width: 300px; color: Theme.text; vertical-alignment: center; font-family: "JetBrains Mono"; font-weight: 700; }
-                                    Text { text: entry.date; color: Theme.text-muted; vertical-alignment: center; }
+                                    Text { text: entry.name; color: Theme.text; vertical-alignment: center; font-family: "JetBrains Mono"; font-weight: 700; overflow: elide; }
+                                    Text { text: entry.date; width: 150px; color: Theme.text-muted; vertical-alignment: center; }
                                     Rectangle {}
                                     Button {
                                         text: "Restore";
@@ -175,9 +199,21 @@ export component DashboardView inherits Rectangle {
                                 }
                                 if (entry.hostname != "" || entry.comment != "" || entry.tags != "") : HorizontalLayout {
                                     spacing: 10px;
-                                    if (entry.hostname != "") : Text { text: "🖥️ " + entry.hostname; color: Theme.text-muted; font-size: 11px; }
-                                    if (entry.comment != "") : Text { text: "💬 " + entry.comment; color: Theme.text-muted; font-size: 11px; font-italic: true; }
-                                    if (entry.tags != "") : Text { text: "🏷️ " + entry.tags; color: Theme.primary; font-size: 11px; }
+                                    if (entry.hostname != "") : HorizontalLayout {
+                                        spacing: 5px;
+                                        Image { source: @image-url("../assets/monitor.svg"); width: 11px; height: 11px; colorize: Theme.text-muted; }
+                                        Text { text: entry.hostname; color: Theme.text-muted; font-size: 11px; }
+                                    }
+                                    if (entry.comment != "") : HorizontalLayout {
+                                        spacing: 5px;
+                                        Image { source: @image-url("../assets/message-square.svg"); width: 11px; height: 11px; colorize: Theme.text-muted; }
+                                        Text { text: entry.comment; color: Theme.text-muted; font-size: 11px; font-italic: true; }
+                                    }
+                                    if (entry.tags != "") : HorizontalLayout {
+                                        spacing: 5px;
+                                        Image { source: @image-url("../assets/tag.svg"); width: 11px; height: 11px; colorize: Theme.primary; }
+                                        Text { text: entry.tags; color: Theme.primary; font-size: 11px; }
+                                    }
                                 }
                             }
                         }
@@ -212,7 +248,7 @@ export component DashboardView inherits Rectangle {
                                     if (new_height > 100px && new_height < 500px) {
                                         DashboardLogic.terminal_height = new_height;
                                     }
-                                }
+                                 }
                             }
                         }
                     }
@@ -253,7 +289,7 @@ export component DashboardView inherits Rectangle {
                                 Text { text: "TERMINAL"; color: Theme.text; font-size: 11px; font-weight: 700; vertical-alignment: center; }
                                 Text { text: "OUTPUT"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
                                 Rectangle {}
-                                Text { text: "✕"; color: Theme.text-muted; vertical-alignment: center; }
+                                Image { source: @image-url("../assets/x.svg"); width: 12px; height: 12px; colorize: Theme.text-muted; }
                                 Rectangle { width: 10px; }
                             }
                         }
@@ -280,7 +316,11 @@ export component DashboardView inherits Rectangle {
             background: Theme.surface;
             HorizontalLayout {
                 padding-left: 10px; padding-right: 10px; spacing: 15px;
-                Text { text: "● All systems nominal"; color: Theme.primary; font-size: 11px; vertical-alignment: center; }
+                HorizontalLayout {
+                    spacing: 5px;
+                    Image { source: @image-url("../assets/circle.svg"); width: 11px; height: 11px; colorize: Theme.primary; }
+                    Text { text: DashboardLogic.status_text; color: Theme.primary; font-size: 11px; vertical-alignment: center; }
+                }
                 Text { text: "Last sync: 2m ago"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
                 Rectangle {}
                 Text { text: "Borg 1.2.4"; color: Theme.text; font-size: 11px; vertical-alignment: center; font-weight: 700; }

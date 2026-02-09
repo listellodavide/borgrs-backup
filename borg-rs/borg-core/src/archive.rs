@@ -681,20 +681,28 @@ impl<'a> ArchiveRestorer<'a> {
             match item.item_type {
                 ItemType::Directory => {
                     if let Err(e) = fs::create_dir_all(&target_path) {
-                        self.progress.on_error(&target_path, &e.to_string());
+                        let err_msg = format!("Failed to create directory {}: {}", target_path.display(), e);
+                        warn!("{}", err_msg);
+                        self.progress.on_error(&target_path, &err_msg);
                         continue;
                     }
                     if let Err(e) = self.restore_attributes(&target_path, &item.attrs) {
-                        self.progress.on_error(&target_path, &e.to_string());
+                        let err_msg = format!("Failed to restore attributes for {}: {}", target_path.display(), e);
+                        warn!("{}", err_msg);
+                        self.progress.on_error(&target_path, &err_msg);
                     }
                     stats.dirs_restored += 1;
                 }
                 ItemType::File => {
                     self.progress.on_file_start(&target_path, item.size);
                     if let Some(parent) = target_path.parent() {
-                        if let Err(e) = fs::create_dir_all(parent) {
-                            self.progress.on_error(&target_path, &e.to_string());
-                            continue;
+                        if !parent.exists() {
+                            if let Err(e) = fs::create_dir_all(parent) {
+                                let err_msg = format!("Failed to create parent directory {}: {}", parent.display(), e);
+                                warn!("{}", err_msg);
+                                self.progress.on_error(&target_path, &err_msg);
+                                continue;
+                            }
                         }
                     }
                     
@@ -728,14 +736,20 @@ impl<'a> ArchiveRestorer<'a> {
                 ItemType::Symlink => {
                     if let Some(target) = &item.symlink_target {
                         if let Some(parent) = target_path.parent() {
-                            if let Err(e) = fs::create_dir_all(parent) {
-                                self.progress.on_error(&target_path, &e.to_string());
-                                continue;
+                            if !parent.exists() {
+                                if let Err(e) = fs::create_dir_all(parent) {
+                                    let err_msg = format!("Failed to create parent directory for symlink {}: {}", target_path.display(), e);
+                                    warn!("{}", err_msg);
+                                    self.progress.on_error(&target_path, &err_msg);
+                                    continue;
+                                }
                             }
                         }
                         #[cfg(unix)]
                         if let Err(e) = std::os::unix::fs::symlink(target, &target_path) {
-                            self.progress.on_error(&target_path, &e.to_string());
+                            let err_msg = format!("Failed to create symlink {}: {}", target_path.display(), e);
+                            warn!("{}", err_msg);
+                            self.progress.on_error(&target_path, &err_msg);
                         }
                         stats.symlinks_restored += 1;
                     }
@@ -751,19 +765,26 @@ impl<'a> ArchiveRestorer<'a> {
                 if let Some(link_target) = &item.hardlink_target {
                     let link_source = dest.join(link_target);
                     if let Some(parent) = target_path.parent() {
-                        if let Err(e) = fs::create_dir_all(parent) {
-                            self.progress.on_error(&target_path, &e.to_string());
-                            continue;
+                        if !parent.exists() {
+                            if let Err(e) = fs::create_dir_all(parent) {
+                                let err_msg = format!("Failed to create parent directory for hardlink {}: {}", target_path.display(), e);
+                                warn!("{}", err_msg);
+                                self.progress.on_error(&target_path, &err_msg);
+                                continue;
+                            }
                         }
                     }
                     if link_source.exists() {
                         if let Err(e) = fs::hard_link(&link_source, &target_path) {
-                            self.progress.on_error(&target_path, &e.to_string());
+                            let err_msg = format!("Failed to create hardlink from {} to {}: {}", link_source.display(), target_path.display(), e);
+                            warn!("{}", err_msg);
+                            self.progress.on_error(&target_path, &err_msg);
                         }
                         stats.hardlinks_restored += 1;
                     } else {
-                        warn!("Hardlink source not found: {}", link_source.display());
-                        self.progress.on_error(&target_path, "hardlink source not found");
+                        let err_msg = format!("Hardlink source not found: {}", link_source.display());
+                        warn!("{}", err_msg);
+                        self.progress.on_error(&target_path, &err_msg);
                     }
                 }
             }
@@ -949,6 +970,22 @@ pub fn default_archive_unique_name() -> String {
   )
 }
 
+/// Returns current time as: "HH:MM DD.MM.YYYY" (24h)
+pub fn current_time_hh_mm_dd_mm_yyyy() -> String {
+    let ntp_servers = [
+        "ntp1.inrim.it",
+        "ntp2.inrim.it",
+        "0.it.pool.ntp.org",
+        "1.it.pool.ntp.org",
+        "0.ch.pool.ntp.org",
+        "1.ch.pool.ntp.org",
+    ];
+
+    let ts = get_ntp_timestamp(&ntp_servers);
+
+    ts.format("%H:%M %d.%m.%Y").to_string()
+}
+
 /// Get the system hostname
 fn gethostname() -> String {
     hostname::get()
@@ -1091,6 +1128,43 @@ mod tests {
 
         assert_eq!(archive.stats.nfiles, 0);
         assert_eq!(archive.stats.ndirs, 1); // Just the root dir
+    }
+
+    #[tokio::test]
+    async fn test_restore_missing_parents() {
+        use tempfile::TempDir;
+        use crate::storage::build_operator;
+        use crate::storage::StorageConfig;
+
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().join("repo");
+        let source_dir = temp_dir.path().join("source");
+        
+        // Deep nested source
+        let deep_nested = source_dir.join("a/b/c");
+        fs::create_dir_all(&deep_nested).unwrap();
+        fs::write(deep_nested.join("file.txt"), "content").unwrap();
+
+        // Create archive
+        let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
+        let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+        let creator = ArchiveCreator::new(&mut repo);
+        creator.create("test", &[source_dir.clone()], None, None).await.unwrap();
+
+        // Restore to a path where intermediate directories don't exist
+        let restore_root = temp_dir.path().join("restore_root");
+        let deep_restore_dest = restore_root.join("x/y/z");
+        // Note: we don't create deep_restore_dest or its parents x/y
+
+        let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
+        let restorer = ArchiveRestorer::new(&repo);
+        
+        // This should trigger fs::create_dir_all(dest) which creates x/y/z
+        let stats = restorer.restore("test", &deep_restore_dest).await.unwrap();
+
+        assert!(deep_restore_dest.exists());
+        assert!(deep_restore_dest.join("a/b/c/file.txt").exists());
+        assert_eq!(stats.files_restored, 1);
     }
 
     #[tokio::test]

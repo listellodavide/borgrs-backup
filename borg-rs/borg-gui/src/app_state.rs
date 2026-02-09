@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use keyring::Entry;
+
+const KEYRING_SERVICE: &str = "borg-gui";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoBookmark {
@@ -23,6 +26,29 @@ pub struct ArchiveBookmark {
     pub paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ScheduleType {
+    Daily,
+    Weekly,
+    Manual,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupSchedule {
+    pub schedule_type: ScheduleType,
+    pub weekday: i32, // 0 = Mon … 6 = Sun
+    pub hour: i32,
+    pub minute: i32,
+    pub run_on_boot_if_missed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduledTask {
+    pub repo_name: String,
+    pub archive_name: String,
+    pub schedule: BackupSchedule,
+}
+
 #[derive(Debug, Default)]
 pub struct BorgAppState {
     pub current_repo: Option<String>,
@@ -30,6 +56,7 @@ pub struct BorgAppState {
     pub bookmarks: Vec<RepoBookmark>,
     pub session_passwords: HashMap<String, String>, // repo_path -> password
     pub archive_bookmarks: Vec<ArchiveBookmark>,
+    pub scheduled_tasks: Vec<ScheduledTask>,
 }
 
 impl BorgAppState {
@@ -37,6 +64,7 @@ impl BorgAppState {
         let mut state = Self::default();
         state.load_bookmarks();
         state.load_archive_bookmarks();
+        state.load_scheduled_tasks();
         state
     }
 
@@ -51,6 +79,13 @@ impl BorgAppState {
         let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
         path.pop();
         path.push("archive_bookmarks.json");
+        path
+    }
+
+    pub fn get_scheduled_tasks_path() -> PathBuf {
+        let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+        path.pop();
+        path.push("scheduled_task.json");
         path
     }
 
@@ -96,6 +131,27 @@ impl BorgAppState {
         Ok(())
     }
 
+    pub fn load_scheduled_tasks(&mut self) {
+        let path = Self::get_scheduled_tasks_path();
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(path) {
+                if let Ok(tasks) = serde_json::from_str(&content) {
+                    self.scheduled_tasks = tasks;
+                }
+            }
+        } else {
+            self.scheduled_tasks = Vec::new();
+            let _ = self.save_scheduled_tasks();
+        }
+    }
+
+    pub fn save_scheduled_tasks(&self) -> anyhow::Result<()> {
+        let path = Self::get_scheduled_tasks_path();
+        let content = serde_json::to_string_pretty(&self.scheduled_tasks)?;
+        fs::write(path, content)?;
+        Ok(())
+    }
+
     pub fn upsert_archive_bookmark(&mut self, bookmark: ArchiveBookmark) {
         if let Some(existing) = self
             .archive_bookmarks
@@ -118,12 +174,25 @@ impl BorgAppState {
 
     pub fn add_bookmark(&mut self, bookmark: RepoBookmark, password: Option<String>) {
         if let Some(pwd) = password {
-            self.session_passwords.insert(bookmark.path.clone(), pwd);
+            self.session_passwords.insert(bookmark.path.clone(), pwd.clone());
+            let _ = self.store_password(&bookmark.path, &pwd);
         }
         // Avoid duplicates by path
         if !self.bookmarks.iter().any(|b| b.path == bookmark.path) {
             self.bookmarks.push(bookmark);
             let _ = self.save_bookmarks();
         }
+    }
+
+    pub fn store_password(&self, repo_path: &str, password: &str) -> anyhow::Result<()> {
+        let entry = Entry::new(KEYRING_SERVICE, repo_path)?;
+        entry.set_password(password)?;
+        Ok(())
+    }
+
+    pub fn get_password(&self, repo_path: &str) -> anyhow::Result<String> {
+        let entry = Entry::new(KEYRING_SERVICE, repo_path)?;
+        let password = entry.get_password()?;
+        Ok(password)
     }
 }

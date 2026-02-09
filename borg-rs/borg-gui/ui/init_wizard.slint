@@ -98,9 +98,16 @@ export component InitWizardView inherits Rectangle {
                 VerticalLayout {
                     spacing: 8px;
                     Text { text: InitWizardLogic.repo_type == "local" ? "Absolute Folder Path" : "Remote URL (ssh://user@host/path)"; color: Theme.text-muted; font-size: 14px; }
-                    LineEdit { 
-                        text <=> InitWizardLogic.path_url; 
-                        placeholder-text: InitWizardLogic.repo_type == "local" ? "/home/user/backups" : "ssh://user@host/path"; 
+                    HorizontalLayout {
+                        spacing: 10px;
+                        LineEdit { 
+                            text <=> InitWizardLogic.path_url; 
+                            placeholder-text: InitWizardLogic.repo_type == "local" ? "/home/user/backups" : "ssh://user@host/path"; 
+                        }
+                        if (InitWizardLogic.repo_type == "local") : Button {
+                            text: "Browse...";
+                            clicked => { InitWizardLogic.browse_path() }
+                        }
                     }
                 }
 

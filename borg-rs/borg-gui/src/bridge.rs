@@ -2,7 +2,10 @@ use crate::app_state::BorgAppState as RustAppState;
 use crate::app_state::RepoBookmark;
 use crate::commands;
 use crate::commands::{BackupProgress, RestoreProgress};
+use crate::{ArchiveContentEntry, ArchiveContentLogic, ArchiveEntry, ArchiveFilesLogic};
+use slint::{ComponentHandle, Model, SharedString, VecModel};
 use std::path::Path;
+use super::scheduler_bridge;
 
 struct GuiBackupProgress {
     window_weak: slint::Weak<MainWindow>,
@@ -150,7 +153,7 @@ use slint::Model;
 use slint::SharedString;
 use std::sync::{Arc, Mutex};
 use super::{MainWindow, AppState, DashboardLogic, InitWizardLogic, RestoreLogic, RepoItem, NewArchiveWizardLogic};
-use crate::ArchiveEntry;
+use crate::{ArchiveEntry, ArchiveContentLogic, ArchiveContentEntry};
 
 pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
     let window_weak = window.as_weak();
@@ -369,7 +372,9 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 let dashboard = window.global::<DashboardLogic>();
                 dashboard.set_active_repo_index(index);
                 dashboard.set_has_selected_repo(true);
-                
+                dashboard.set_is_scheduled_tasks_active(false);
+                window.global::<AppState>().set_current_view("dashboard".into());
+
                 let (repo_path, bookmarks) = {
                     let s = state_clone.lock().unwrap();
                     let path = s.bookmarks.get(index as usize).map(|bm| bm.path.clone());
@@ -395,6 +400,18 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 if let Some(bookmark) = bookmarks.get(index as usize) {
                     println!("Selected repo: {} at {}", bookmark.name, bookmark.path);
                 }
+            }
+        }
+    });
+
+    dashboard.on_select_scheduled_tasks({
+        let window_weak = window_weak.clone();
+        move || {
+            if let Some(window) = window_weak.upgrade() {
+                let dashboard = window.global::<DashboardLogic>();
+                dashboard.set_is_scheduled_tasks_active(true);
+                dashboard.set_has_selected_repo(false);
+                window.global::<AppState>().set_current_view("scheduled_tasks".into());
             }
         }
     });
@@ -497,8 +514,8 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 let dashboard_logic = window.global::<DashboardLogic>();
                 let active_index = dashboard_logic.get_active_repo_index();
                 
-                let (repo_name, repo_path, repo_password) = {
-                    let mut s = state_clone.lock().unwrap();
+                let (repo_name, repo_path, _repo_password) = {
+                    let s = state_clone.lock().unwrap();
                     if let Some(bookmark) = s.bookmarks.get(active_index as usize) {
                         let pwd = s.session_passwords.get(&bookmark.path).cloned();
                         (bookmark.name.clone(), bookmark.path.clone(), pwd)
@@ -691,6 +708,24 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
         }
     });
 
+    wizard.on_browse_path({
+        let window_weak = window_weak.clone();
+        move || {
+            let window_weak2 = window_weak.clone();
+            tokio::task::spawn_blocking(move || {
+                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                    let path_str = dir.to_string_lossy().to_string();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(window) = window_weak2.upgrade() {
+                            let wizard = window.global::<InitWizardLogic>();
+                            wizard.set_path_url(SharedString::from(path_str));
+                        }
+                    });
+                }
+            });
+        }
+    });
+
     // Restore Logic
     let restore = window.global::<RestoreLogic>();
 
@@ -805,4 +840,119 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
             });
         }
     });
+
+    scheduler_bridge::init_scheduler_bridge(window, state.clone());
+
+    // Archive Content Logic (dialog)
+    let content_logic = window.global::<ArchiveContentLogic>();
+    content_logic.on_close({
+        let window_weak = window_weak.clone();
+        move || {
+            if let Some(window) = window_weak.upgrade() {
+                window.global::<ArchiveContentLogic>().set_show_dialog(false);
+            }
+        }
+    });
+
+    let archive_files_logic = window.global::<ArchiveFilesLogic>();
+    archive_files_logic.on_request_files({
+        let window_weak = window_weak.clone();
+        let state_clone = state.clone();
+        move |archive_name, search_term, use_regex| {
+            if let Some(window) = window_weak.upgrade() {
+                let dashboard = window.global::<DashboardLogic>();
+                let active_index = dashboard.get_active_repo_index();
+
+                let (repo_path, repo_password) = {
+                    let s = state_clone.lock().unwrap();
+                    if let Some(bm) = s.bookmarks.get(active_index as usize) {
+                        let pwd = s.session_passwords.get(&bm.path).cloned();
+                        (bm.path.clone(), pwd)
+                    } else {
+                        return;
+                    }
+                };
+
+                let window_weak2 = window_weak.clone();
+                tokio::spawn(async move {
+                    let res = async {
+                        let storage = borg_core::storage::StorageConfig::Local { path: std::path::PathBuf::from(&repo_path) };
+                        let op = borg_core::storage::build_operator(storage).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                        let repo = borg_core::repository::Repository::open(op, repo_path.clone(), repo_password.as_deref())
+                            .await
+                            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                        let restorer = borg_core::archive::ArchiveRestorer::new(&repo);
+                        let archive = restorer.load_archive(&archive_name).await
+                            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                        Ok::<_, anyhow::Error>(archive)
+                    }.await;
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = window_weak2.upgrade() {
+                            match res {
+                                Ok(archive) => {
+                                    let files_logic = w.global::<ArchiveFilesLogic>();
+                                    let original_roots = archive.metadata.original_paths.unwrap_or_default();
+
+                                    let mut files: Vec<SharedString> = archive.items.into_iter()
+                                        .map(|item| {
+                                            let abs_path = if let Some(root) = original_roots.first() {
+                                                let mut p = root.clone();
+                                                p.push(&item.path);
+                                                p.to_string_lossy().to_string()
+                                            } else {
+                                                item.path.to_string_lossy().to_string()
+                                            };
+                                            abs_path.into()
+                                        })
+                                        .collect();
+
+                                    if !search_term.is_empty() {
+                                        if use_regex {
+                                            if let Ok(re) = regex::Regex::new(&search_term) {
+                                                files.retain(|f| re.is_match(f));
+                                            }
+                                        } else {
+                                            files.retain(|f| f.contains(&search_term));
+                                        }
+                                    }
+                                    
+                                    let mut loaded_files = files.len();
+                                    let initial_load_size = 4096;
+                                    if files.len() > initial_load_size {
+                                        files.truncate(initial_load_size);
+                                        loaded_files = initial_load_size;
+                                    }
+
+                                    files_logic.set_file_list(std::rc::Rc::new(slint::VecModel::from(files)).into());
+                                }
+                                Err(e) => {
+                                    w.global::<DashboardLogic>().set_terminal_text(format!("Error loading archive: {}", e).into());
+                                }
+                            }
+                        }
+                    });
+                });
+            }
+        }
+    });
+}
+
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    const TB: u64 = GB * 1024;
+
+    if bytes >= TB {
+        format!("{:.1}T", bytes as f64 / TB as f64)
+    } else if bytes >= GB {
+        format!("{:.1}G", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1}M", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1}K", bytes as f64 / KB as f64)
+    } else {
+        format!("{}B", bytes)
+    }
 }

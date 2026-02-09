@@ -15,9 +15,43 @@ component RepoSidebarItem inherits Rectangle {
     HorizontalLayout {
         padding-left: 15px;
         spacing: 12px;
-        Text { text: active ? "▶" : "📁"; vertical-alignment: center; color: active ? Theme.primary : Theme.text-muted; }
+        Image {
+            source: active ? @image-url("../../assets/chevron-right.svg") : @image-url("../../assets/folder.svg");
+            width: 16px;
+            height: 16px;
+            colorize: active ? Theme.primary : Theme.text-muted;
+        }
         Text {
             text: root.text;
+            color: active ? Theme.text : Theme.text-muted;
+            vertical-alignment: center;
+            font-weight: active ? 700 : 400;
+            overflow: elide;
+        }
+    }
+}
+
+component ScheduledTasksSidebarItem inherits Rectangle {
+    in property <bool> active;
+    callback clicked <=> touch.clicked;
+
+    height: 40px;
+    background: active ? Theme.surface : transparent;
+    border-radius: 4px;
+
+    touch := TouchArea {}
+
+    HorizontalLayout {
+        padding-left: 15px;
+        spacing: 12px;
+        Image {
+            source: @image-url("../../assets/calendar-clock.svg");
+            width: 16px;
+            height: 16px;
+            colorize: active ? Theme.primary : Theme.text-muted;
+        }
+        Text {
+            text: "Scheduled Tasks";
             color: active ? Theme.text : Theme.text-muted;
             vertical-alignment: center;
             font-weight: active ? 700 : 400;
@@ -48,8 +82,13 @@ export component Sidebar inherits Rectangle {
         Rectangle { height: 10px; }
         for repo[i] in DashboardLogic.repositories: RepoSidebarItem {
             text: repo.name;
-            active: DashboardLogic.active_repo_index == i && DashboardLogic.has_selected_repo;
+            active: DashboardLogic.active_repo_index == i && DashboardLogic.has_selected_repo && !DashboardLogic.is_scheduled_tasks_active;
             clicked => { DashboardLogic.select_repo(i) }
+        }
+        Rectangle { height: 20px; }
+        ScheduledTasksSidebarItem {
+            active: DashboardLogic.is_scheduled_tasks_active;
+            clicked => { DashboardLogic.select_scheduled_tasks() }
         }
         Rectangle {} // Spacer
     }

@@ -3,7 +3,7 @@
 use anyhow::Result;
 use super::{get_repo_path, open_repository};
 use crate::{Cli, DeleteArgs};
-use borg_core::BorgError;
+use borg_core::error::BorgError;
 
 pub async fn run(cli: &Cli, args: &DeleteArgs) -> Result<()> {
     let repo_path_raw = get_repo_path(cli)?;

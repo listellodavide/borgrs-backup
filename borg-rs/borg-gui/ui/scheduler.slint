@@ -1,0 +1,109 @@
+import { CheckBox, ComboBox, GroupBox, SpinBox, ListView, Button } from "std-widgets.slint";
+import { Theme } from "./theme.slint";
+import { SchedulerLogic, ScheduleType, BackupSchedule, ScheduledTask, DashboardLogic, ArchiveFilesDialogGlobal, ArchiveFilesLogic } from "./globals.slint";
+import { ArchiveFilesDialog } from "./archive_files_dialog.slint";
+
+export component SchedulerView inherits Rectangle {
+    background: Theme.background;
+
+    dialog := ArchiveFilesDialog {
+        file-list: ArchiveFilesLogic.file-list;
+        search-term <=> ArchiveFilesLogic.search-term;
+        use-regex <=> ArchiveFilesLogic.use-regex;
+        request-files(archive-name) => {
+            ArchiveFilesLogic.request-files(archive-name, self.search-term, self.use-regex);
+        }
+    }
+
+    init => {
+        ArchiveFilesDialogGlobal.dialog = dialog;
+    }
+
+    HorizontalLayout {
+        padding: 20px;
+        spacing: 20px;
+
+        // Task List
+        VerticalLayout {
+            width: 300px;
+            spacing: 10px;
+            Text { text: "Scheduled Tasks"; font-size: 18px; font-weight: 700; }
+            ListView {
+                for task[i] in SchedulerLogic.tasks: Rectangle {
+                    background: SchedulerLogic.selected_task_index == i ? Theme.surface : transparent;
+                    border-radius: 4px;
+                    TouchArea {
+                        clicked => { SchedulerLogic.selected_task_index = i; }
+                    }
+                    padding: 10px;
+                    Text { text: task.repo_name + " - " + task.archive_name; }
+                }
+            }
+            Button { text: "New Task"; clicked => { SchedulerLogic.new_task() } }
+        }
+
+        // Task Editor
+        VerticalLayout {
+            visible: SchedulerLogic.selected_task_index >= 0;
+            spacing: 15px;
+
+            property <ScheduledTask> selected_task: SchedulerLogic.tasks[SchedulerLogic.selected_task_index];
+
+            Text { text: "Edit Task"; font-size: 18px; font-weight: 700; }
+
+            ComboBox {
+                model: ["Daily", "Weekly", "Manual"];
+                current-value: selected_task.schedule.schedule_type == ScheduleType.Daily ? "Daily" : (selected_task.schedule.schedule_type == ScheduleType.Weekly ? "Weekly" : "Manual");
+                selected(value) => {
+                    if (value == "Daily") { selected_task.schedule.schedule_type = ScheduleType.Daily; }
+                    else if (value == "Weekly") { selected_task.schedule.schedule_type = ScheduleType.Weekly; }
+                    else { selected_task.schedule.schedule_type = ScheduleType.Manual; }
+                }
+            }
+
+            if selected_task.schedule.schedule_type == ScheduleType.Weekly: ComboBox {
+                model: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+                current-index: selected_task.schedule.weekday;
+                selected(value) => { 
+                    if (value == "Monday") { selected_task.schedule.weekday = 0; }
+                    else if (value == "Tuesday") { selected_task.schedule.weekday = 1; }
+                    else if (value == "Wednesday") { selected_task.schedule.weekday = 2; }
+                    else if (value == "Thursday") { selected_task.schedule.weekday = 3; }
+                    else if (value == "Friday") { selected_task.schedule.weekday = 4; }
+                    else if (value == "Saturday") { selected_task.schedule.weekday = 5; }
+                    else if (value == "Sunday") { selected_task.schedule.weekday = 6; }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Hour:"; vertical-alignment: center; }
+                SpinBox {
+                    value: selected_task.schedule.hour;
+                    minimum: 0;
+                    maximum: 23;
+                    edited(val) => { selected_task.schedule.hour = val; }
+                }
+                Text { text: "Minute:"; vertical-alignment: center; }
+                SpinBox {
+                    value: selected_task.schedule.minute;
+                    minimum: 0;
+                    maximum: 59;
+                    edited(val) => { selected_task.schedule.minute = val; }
+                }
+            }
+
+            CheckBox {
+                text: "Run on boot if missed";
+                checked: selected_task.schedule.run_on_boot_if_missed;
+                toggled => { selected_task.schedule.run_on_boot_if_missed = !selected_task.schedule.run_on_boot_if_missed; }
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Save"; clicked => { SchedulerLogic.save_task(SchedulerLogic.tasks[SchedulerLogic.selected_task_index]); } }
+                Button { text: "Delete"; clicked => { SchedulerLogic.delete_task(SchedulerLogic.selected_task_index); } }
+            }
+        }
+    }
+}

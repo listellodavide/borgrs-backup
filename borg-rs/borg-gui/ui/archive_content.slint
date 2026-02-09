@@ -1,0 +1,112 @@
+import { Button, VerticalBox, HorizontalBox, ScrollView, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ArchiveContentLogic } from "globals.slint";
+
+export component ArchiveContentView inherits Rectangle {
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6); // Semi-transparent backdrop
+
+    TouchArea {
+        // Prevent clicking through to the underlying view
+        clicked => { ArchiveContentLogic.close() }
+    }
+
+    Rectangle {
+        width: 800px;
+        height: 80%;
+        background: Theme.background;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        // Prevent closing when clicking the dialog itself
+        TouchArea {
+            clicked => { }
+        }
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 15px;
+
+            HorizontalLayout {
+                Text {
+                    text: "Archive: " + ArchiveContentLogic.archive_name;
+                    font-size: 20px;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+                Rectangle {} // Spacer
+                Button {
+                    text: "Close";
+                    clicked => { ArchiveContentLogic.close() }
+                }
+            }
+
+            LineEdit {
+                placeholder-text: "Search files...";
+                text <=> ArchiveContentLogic.search_text;
+            }
+
+            Rectangle {
+                background: Theme.surface;
+                border-radius: 4px;
+                
+                VerticalLayout {
+                    // Header
+                    Rectangle {
+                        height: 30px;
+                        background: Theme.crust;
+                        HorizontalLayout {
+                            padding-left: 10px; padding-right: 10px;
+                            Text { text: "Type"; width: 40px; color: Theme.text-muted; vertical-alignment: center; font-size: 12px; }
+                            Text { text: "Path"; color: Theme.text-muted; vertical-alignment: center; font-size: 12px; }
+                            Text { text: "Size"; width: 80px; color: Theme.text-muted; vertical-alignment: center; font-size: 12px; horizontal-alignment: right; }
+                        }
+                    }
+
+                    ScrollView {
+                        VerticalLayout {
+                            padding: 5px;
+                            for file in ArchiveContentLogic.files : Rectangle {
+                                // Simple filtering logic in Slint
+                                property <bool> matches_search: ArchiveContentLogic.search_text == "" || 
+                                         file.path == ArchiveContentLogic.search_text; // contains is not supported in Slint yet?
+                                visible: matches_search;
+                                height: self.visible ? 30px : 0px;
+                                
+                                HorizontalLayout {
+                                    padding-left: 5px; padding-right: 5px;
+                                    spacing: 10px;
+                                    Text { 
+                                        text: file.item_type == "dir" ? "[D]" : "[F]"; 
+                                        width: 30px; 
+                                        color: file.item_type == "dir" ? Theme.primary : Theme.text-muted; 
+                                        vertical-alignment: center;
+                                        font-size: 11px;
+                                    }
+                                    Text { 
+                                        text: file.path; 
+                                        color: Theme.text; 
+                                        vertical-alignment: center; 
+                                        font-family: "JetBrains Mono";
+                                        overflow: elide;
+                                    }
+                                    Text { 
+                                        text: file.size; 
+                                        width: 80px; 
+                                        color: Theme.text-muted; 
+                                        vertical-alignment: center; 
+                                        horizontal-alignment: right;
+                                        font-size: 12px;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,11 +1,13 @@
-import { AppState, ArchiveEntry, RepoItem, DashboardLogic, InitWizardLogic, RestoreLogic, NewArchiveWizardLogic } from "globals.slint";
-export { AppState, ArchiveEntry, RepoItem, DashboardLogic, InitWizardLogic, RestoreLogic, NewArchiveWizardLogic }
+import { AppState, ArchiveEntry, RepoItem, DashboardLogic, InitWizardLogic, RestoreLogic, NewArchiveWizardLogic, SchedulerLogic, ArchiveContentLogic } from "globals.slint";
+export { AppState, ArchiveEntry, RepoItem, DashboardLogic, InitWizardLogic, RestoreLogic, NewArchiveWizardLogic, SchedulerLogic, ArchiveContentLogic }
 import { Sidebar } from "components/sidebar.slint";
 import { DashboardView } from "dashboard.slint";
 import { InitWizardView } from "init_wizard.slint";
 import { RestoreView } from "restore.slint";
 import { NewArchiveWizardView } from "new_archive_wizard.slint";
 import { PasswordDialog } from "components/password_dialog.slint";
+import { SchedulerView } from "scheduler.slint";
+import { ArchiveContentView } from "archive_content.slint";
 
 // --- Logic Globals ---
 // Note: Logic globals are now defined in globals.slint for consistency
@@ -14,8 +16,8 @@ import { PasswordDialog } from "components/password_dialog.slint";
 
 export component MainWindow inherits Window {
     title: "Borg-GUI Rust";
-    min-width: 800px;
-    min-height: 600px;
+    min-width: 1000px;
+    min-height: 700px;
 
     HorizontalLayout {
         Sidebar {
@@ -27,8 +29,10 @@ export component MainWindow inherits Window {
             if (AppState.current_view == "init") : InitWizardView {}
             if (AppState.current_view == "restore") : RestoreView {}
             if (AppState.current_view == "new_archive") : NewArchiveWizardView {}
-            
+            if (AppState.current_view == "scheduled_tasks") : SchedulerView {}
+
             if (AppState.show_password_dialog) : PasswordDialog {}
+            if (ArchiveContentLogic.show_dialog) : ArchiveContentView {}
         }
     }
 }

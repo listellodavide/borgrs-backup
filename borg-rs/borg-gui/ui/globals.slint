@@ -1,4 +1,5 @@
 import { StandardListView } from "std-widgets.slint";
+import { ArchiveFilesDialog } from "./archive_files_dialog.slint";
 
 // Shared data structures used across multiple UI components
 export struct RepoItem {
@@ -14,6 +15,12 @@ export struct ArchiveEntry {
     hostname: string,
     comment: string,
     tags: string,
+}
+
+export struct ArchiveContentEntry {
+    path: string,
+    size: string,
+    item_type: string,
 }
 
 // Global state for the entire application, like current view
@@ -32,14 +39,30 @@ export global AppState {
     callback password_dialog_cancelled();
 }
 
+export global ArchiveFilesDialogGlobal {
+    in-out property <ArchiveFilesDialog> dialog;
+}
+
+export global ArchiveFilesLogic {
+    in-out property <string> current-archive-name;
+    callback request-files(string, string, bool);
+    in-out property <[string]> file-list;
+    in-out property <string> search-term;
+    in-out property <bool> use-regex;
+}
+
 export global DashboardLogic {
     in property <[RepoItem]> repositories;
     in property <int> active_repo_index;
     in property <bool> has_selected_repo;
     in property <[ArchiveEntry]> archives;
     in property <string> terminal_text;
+    in property <string> status_text;
     in-out property <length> terminal_height: 200px;
-    
+    in-out property <bool> is_scheduled_tasks_active: false;
+    in property <bool> is_scheduled_backup_running: false;
+    in property <string> scheduled_backup_repo_path;
+
     // Ready for backup state
     in property <bool> has_pending_archive: false;
     in property <[string]> pending_archive_paths;
@@ -48,7 +71,9 @@ export global DashboardLogic {
     callback backup_clicked();
     callback refresh_archives();
     callback select_repo(int);
+    callback select_scheduled_tasks();
     callback open_restore(ArchiveEntry);
+    callback archive_double_clicked(ArchiveEntry);
 }
 
 export global NewArchiveWizardLogic {
@@ -89,6 +114,32 @@ export global InitWizardLogic {
     callback next();
     callback finish();
     callback cancel();
+    callback browse_path();
+}
+
+export enum ScheduleType { Daily, Weekly, Manual }
+
+export struct BackupSchedule {
+    schedule_type: ScheduleType,
+    weekday: int,      // 0 = Mon … 6 = Sun
+    hour: int,
+    minute: int,
+    run_on_boot_if_missed: bool,
+}
+
+export struct ScheduledTask {
+    repo_name: string,
+    archive_name: string,
+    schedule: BackupSchedule,
+}
+
+export global SchedulerLogic {
+    in-out property <[ScheduledTask]> tasks;
+    in-out property <int> selected_task_index: -1;
+
+    callback new_task();
+    callback save_task(ScheduledTask);
+    callback delete_task(int);
 }
 
 export global RestoreLogic {
@@ -100,4 +151,15 @@ export global RestoreLogic {
     callback browse_path();
     callback start_restore();
     callback cancel();
+}
+
+export global ArchiveContentLogic {
+    in property <string> archive_name;
+    in property <[ArchiveContentEntry]> files;
+    in-out property <string> search_text;
+    in-out property <bool> regex_enabled: false;
+    in-out property <bool> show_dialog: false;
+
+    callback search_apply(string, bool);
+    callback close();
 }
