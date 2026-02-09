@@ -103,6 +103,23 @@ impl SchedulerReporter for GuiSchedulerReporter {
         }
         None
     }
+
+    fn on_scheduler_tick(&self, tasks_found: usize) {
+        let _ = slint::invoke_from_event_loop({
+            let window_weak = self.window_weak.clone();
+            move || {
+                if let Some(window) = window_weak.upgrade() {
+                    let dash = window.global::<DashboardLogic>();
+                    let timestamp = borg_core::archive::current_time_hh_mm_dd_mm_yyyy();
+                    if tasks_found > 0 {
+                        dash.set_status_text(format!("Scheduled Task check OK, run {} tasks at {}", tasks_found, timestamp).into());
+                    } else {
+                        dash.set_status_text(format!("Scheduled Task check OK, None at {}", timestamp).into());
+                    }
+                }
+            }
+        });
+    }
 }
 
 #[tokio::main]

@@ -23,7 +23,7 @@ export component SchedulerView inherits Rectangle {
                     }
                     HorizontalLayout {
                         padding: 10px;
-                        Text { text: task.repo_name + " - " + task.archive_name; }
+                        Text { text: task.task_name; }
                     }
                 }
             }
@@ -40,12 +40,32 @@ export component SchedulerView inherits Rectangle {
             Text { text: "Edit Task"; font-size: 18px; font-weight: 700; }
 
             ComboBox {
+                model: SchedulerLogic.available_repo_names;
+                current-value: selected_task.repo_name;
+                selected(value) => {
+                    selected_task.repo_name = value;
+                    SchedulerLogic.on_repo_selected(self.current-index);
+                    SchedulerLogic.generate_task_name();
+                }
+            }
+
+            ComboBox {
+                model: SchedulerLogic.available_archive_names;
+                current-value: selected_task.archive_name;
+                selected(value) => {
+                    selected_task.archive_name = value;
+                    SchedulerLogic.generate_task_name();
+                }
+            }
+
+            ComboBox {
                 model: ["Daily", "Weekly", "Manual"];
                 current-value: selected_task.schedule.schedule_type == ScheduleType.Daily ? "Daily" : (selected_task.schedule.schedule_type == ScheduleType.Weekly ? "Weekly" : "Manual");
                 selected(value) => {
                     if (value == "Daily") { selected_task.schedule.schedule_type = ScheduleType.Daily; }
                     else if (value == "Weekly") { selected_task.schedule.schedule_type = ScheduleType.Weekly; }
                     else { selected_task.schedule.schedule_type = ScheduleType.Manual; }
+                    SchedulerLogic.generate_task_name();
                 }
             }
 
@@ -70,14 +90,20 @@ export component SchedulerView inherits Rectangle {
                     value: selected_task.schedule.hour;
                     minimum: 0;
                     maximum: 23;
-                    edited(val) => { selected_task.schedule.hour = val; }
+                    edited(val) => {
+                        selected_task.schedule.hour = val;
+                        SchedulerLogic.generate_task_name();
+                    }
                 }
                 Text { text: "Minute:"; vertical-alignment: center; }
                 SpinBox {
                     value: selected_task.schedule.minute;
                     minimum: 0;
                     maximum: 59;
-                    edited(val) => { selected_task.schedule.minute = val; }
+                    edited(val) => {
+                        selected_task.schedule.minute = val;
+                        SchedulerLogic.generate_task_name();
+                    }
                 }
             }
 

@@ -13,6 +13,7 @@ pub trait SchedulerReporter: Send + Sync {
     fn on_task_complete(&self, task: &ScheduledTask, summary: String);
     fn on_task_error(&self, task: &ScheduledTask, error: String);
     fn get_password(&self, repo_path: &str) -> Option<String>;
+    fn on_scheduler_tick(&self, tasks_found: usize);
 }
 
 struct SchedulerBackupProgress {
@@ -86,11 +87,13 @@ impl Scheduler {
         loop {
             let now = Local::now();
             let mut tasks = self.tasks.lock().await;
+            let mut tasks_found = 0;
 
             for task in tasks.iter_mut() {
                 if self.should_run(task, &now) {
                     self.run_task(task.clone()).await;
                     task.last_run = Some(now);
+                    tasks_found += 1;
                 }
             }
 
@@ -101,8 +104,13 @@ impl Scheduler {
             if !queue.is_empty() {
                 let task = queue.remove(0);
                 self.run_task(task).await;
+                tasks_found += 1;
             }
             drop(queue);
+
+            if let Some(reporter) = &self.reporter {
+                reporter.on_scheduler_tick(tasks_found);
+            }
 
             sleep(Duration::from_secs(30)).await; // Check every 30 seconds
         }

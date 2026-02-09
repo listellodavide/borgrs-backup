@@ -135,16 +135,16 @@ export struct ScheduledTask {
 export global SchedulerLogic {
     in-out property <[ScheduledTask]> tasks;
     in-out property <int> selected_task_index: -1;
-    
+
     // For task creation
     in property <[RepoItem]> available_repositories;
     in property <[string]> available_repo_names;  // Helper array of repo names
     in-out property <int> selected_repo_index: -1;
-    
+
     in property <[ArchiveEntry]> available_archives; // For selected repo
     in property <[string]> available_archive_names;  // Helper array of archive names
     in-out property <int> selected_archive_index: -1;
-    
+
     // Task being edited/created
     in-out property <int> schedule_type_index: 0; // 0=Daily, 1=Weekly, 2=Monthly, 3=Manual
     in-out property <int> schedule_weekday: 0;
