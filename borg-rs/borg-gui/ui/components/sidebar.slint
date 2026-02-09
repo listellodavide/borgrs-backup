@@ -1,0 +1,47 @@
+import { RepoItem, DashboardLogic } from "../globals.slint";
+
+component RepoSidebarItem inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked <=> touch.clicked;
+
+    height: 35px;
+    background: active ? #3b3f41 : transparent;
+
+    touch := TouchArea {}
+
+    HorizontalLayout {
+        padding-left: 10px;
+        spacing: 10px;
+        // Icon placeholder
+        Text { text: "📁"; vertical-alignment: center; }
+        Text {
+            text: root.text;
+            color: #d1d1d1;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component Sidebar inherits Rectangle {
+    width: 200px;
+    background: #3c3f41;
+    border-width: 1px;
+    border-color: #323232;
+
+    VerticalLayout {
+        padding: 10px;
+        Text {
+            text: "REPOSITORIES";
+            font-size: 11px;
+            color: #787878;
+        }
+        Rectangle { height: 10px; }
+        for repo in DashboardLogic.repositories: RepoSidebarItem {
+            text: repo.name;
+            active: false; // Logic to track active repo needed
+            clicked => { DashboardLogic.select_repo(repo) }
+        }
+        Rectangle {} // Spacer
+    }
+}

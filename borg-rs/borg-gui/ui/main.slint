@@ -1,0 +1,23 @@
+import { AppState, DashboardLogic } from "globals.slint";
+import { Sidebar } from "components/sidebar.slint";
+import { DashboardView } from "dashboard.slint";
+
+export component MainWindow inherits Window {
+    title: "Borg-GUI Rust";
+    min-width: 800px;
+    min-height: 600px;
+
+    HorizontalLayout {
+        Sidebar {
+            // Repository Bookmarks here
+            width: 250px;
+        }
+
+        // Main Content Area
+        Rectangle {
+            if (AppState.current_view == "dashboard") : DashboardView {}
+            // if (AppState.current_view == "init") : InitView {}
+            // if (AppState.current_view == "restore") : RestoreView {}
+        }
+    }
+}

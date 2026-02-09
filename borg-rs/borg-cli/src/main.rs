@@ -195,7 +195,7 @@ struct CreateArgs {
     #[arg(long, action = clap::ArgAction::Append)]
     exclude_if_present: Vec<String>,
 
-    /// Compression algorithm (none, lz4, zstd, zlib, lzma)
+    /// Compression algorithm (none, lz4, zstd, zlib, lzma, xz)
     #[arg(short, long, default_value = "zstd")]
     compression: String,
 
@@ -262,13 +262,24 @@ struct CreateArgs {
 
 #[derive(Args, Debug)]
 struct RestoreArgs {
-    /// Archive name
-    #[arg(required = true)]
-    archive: String,
+    /// Name of the archive to restore. Use --all-archives to restore all.
+    #[arg(long, required_unless_present = "all_archives", conflicts_with = "all_archives")]
+    archive: Option<String>,
 
-    /// Paths to extract (all if not specified). Use '::original' to restore paths stored in archive.
-    /// Example: borg restore my-archive ::original
+    /// Restore all archives in the repository.
+    #[arg(long)]
+    all_archives: bool,
+
+    /// Paths to extract (optional). If not specified, all files in the archive are restored.
     paths: Vec<PathBuf>,
+
+    /// Restore to the original location where the backup was created.
+    #[arg(long, conflicts_with = "destination")]
+    original_location: bool,
+
+    /// Destination directory (conflicts with --original-location).
+    #[arg(long, default_value = ".")]
+    destination: PathBuf,
 
     /// WebDAV username
     #[arg(long, value_name = "USER")]
@@ -277,10 +288,6 @@ struct RestoreArgs {
     /// WebDAV password
     #[arg(long, value_name = "PASS")]
     webdav_pass: Option<String>,
-
-    /// Destination directory
-    #[arg(long, default_value = ".")]
-    destination: PathBuf,
 
     /// Exclude paths matching pattern
     #[arg(short, long, action = clap::ArgAction::Append)]

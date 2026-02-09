@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use tracing::info;
+use tracing::{info, debug};
 
 use borg_core::{
     archive::{default_archive_unique_name, ArchiveCreator, BackupProgress},
@@ -57,7 +57,8 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
     let exclusion_matcher = build_exclusion_matcher(&args)?;
 
     // Configure compression
-    let _compressor = build_compressor(&args)?;
+    let compressor = build_compressor(&args)?;
+    debug!("Using compression: {} (level {})", compressor.config().algorithm, compressor.config().level.0);
 
     // Open repository
     let mut repo = open_repository(&repo_path).await
@@ -82,7 +83,8 @@ pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
 
     // Build archive creator
     let mut creator = ArchiveCreator::new(&mut repo)
-        .with_exclusions(exclusion_matcher);
+        .with_exclusions(exclusion_matcher)
+        .with_compression(compressor.config().clone());
 
     // Apply forced chunker profile if provided
     if let Some(profile) = args.force_chunk_profile {

@@ -1,6 +1,6 @@
 //! Compression module supporting multiple algorithms
 //!
-//! Supports lz4 (fast), zstd (balanced), zlib (compatible), and lzma (high ratio).
+//! Supports lz4 (fast), zstd (balanced), zlib (compatible), lzma (high ratio), and xz (extreme ratio).
 //! Each algorithm offers different trade-offs between speed and compression ratio.
 
 use crate::error::{BorgError, Result};
@@ -9,6 +9,7 @@ use lzma_rs::{lzma_compress, lzma_decompress};
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read, Write};
 use tracing::{debug, instrument};
+use xz2::read::{XzDecoder, XzEncoder};
 
 /// Supported compression algorithms
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -25,6 +26,8 @@ pub enum CompressionAlgorithm {
     Zlib,
     /// LZMA - Best compression ratio, slowest
     Lzma,
+    /// XZ - Extreme compression ratio, very slow
+    Xz,
 }
 
 impl CompressionAlgorithm {
@@ -36,6 +39,7 @@ impl CompressionAlgorithm {
             CompressionAlgorithm::Zstd,
             CompressionAlgorithm::Zlib,
             CompressionAlgorithm::Lzma,
+            CompressionAlgorithm::Xz,
         ]
     }
 
@@ -46,7 +50,8 @@ impl CompressionAlgorithm {
             "lz4" => Ok(Self::Lz4),
             "zstd" | "zstandard" => Ok(Self::Zstd),
             "zlib" | "deflate" => Ok(Self::Zlib),
-            "lzma" | "xz" => Ok(Self::Lzma),
+            "lzma" => Ok(Self::Lzma),
+            "xz" => Ok(Self::Xz),
             _ => Err(BorgError::UnsupportedCompression(s.to_string())),
         }
     }
@@ -59,6 +64,7 @@ impl CompressionAlgorithm {
             Self::Zstd => 0x02,
             Self::Zlib => 0x03,
             Self::Lzma => 0x04,
+            Self::Xz => 0x05,
         }
     }
 
@@ -70,6 +76,7 @@ impl CompressionAlgorithm {
             0x02 => Ok(Self::Zstd),
             0x03 => Ok(Self::Zlib),
             0x04 => Ok(Self::Lzma),
+            0x05 => Ok(Self::Xz),
             _ => Err(BorgError::UnsupportedCompression(format!(
                 "Unknown algorithm ID: 0x{:02x}",
                 byte
@@ -85,6 +92,7 @@ impl CompressionAlgorithm {
             Self::Zstd => "zstd",
             Self::Zlib => "zlib",
             Self::Lzma => "lzma",
+            Self::Xz => "xz",
         }
     }
 }
@@ -243,6 +251,7 @@ impl Compressor {
             CompressionAlgorithm::Zstd => self.compress_zstd(data)?,
             CompressionAlgorithm::Zlib => self.compress_zlib(data)?,
             CompressionAlgorithm::Lzma => self.compress_lzma(data)?,
+            CompressionAlgorithm::Xz => self.compress_xz(data)?,
         };
 
         // If compressed data is larger, store uncompressed
@@ -285,6 +294,7 @@ impl Compressor {
             CompressionAlgorithm::Zstd => self.decompress_zstd(&compressed.data)?,
             CompressionAlgorithm::Zlib => self.decompress_zlib(&compressed.data)?,
             CompressionAlgorithm::Lzma => self.decompress_lzma(&compressed.data)?,
+            CompressionAlgorithm::Xz => self.decompress_xz(&compressed.data)?,
         };
 
         // Verify size
@@ -364,6 +374,26 @@ impl Compressor {
         let mut decompressed = Vec::new();
         lzma_decompress(&mut Cursor::new(data), &mut decompressed)
             .map_err(|e| BorgError::Decompression(format!("LZMA decompression failed: {}", e)))?;
+        Ok(decompressed)
+    }
+
+    // XZ compression/decompression
+    fn compress_xz(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let level = self.config.level.0 as u32;
+        let mut encoder = XzEncoder::new(data, level);
+        let mut compressed = Vec::new();
+        encoder
+            .read_to_end(&mut compressed)
+            .map_err(|e| BorgError::Compression(format!("XZ compression failed: {}", e)))?;
+        Ok(compressed)
+    }
+
+    fn decompress_xz(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let mut decoder = XzDecoder::new(data);
+        let mut decompressed = Vec::new();
+        decoder
+            .read_to_end(&mut decompressed)
+            .map_err(|e| BorgError::Decompression(format!("XZ decompression failed: {}", e)))?;
         Ok(decompressed)
     }
 }

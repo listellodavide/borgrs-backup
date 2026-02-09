@@ -1,0 +1,18 @@
+[package]
+name = "borg-gui"
+version = "0.1.0"
+edition = "2024"
+authors = ["Borg-Rust Contributors"]
+license = "BSD-3-Clause"
+
+[dependencies]
+slint = "1.8"
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+borg-core = { path = "../borg-core" }
+
+[build-dependencies]
+slint-build = "1.8"

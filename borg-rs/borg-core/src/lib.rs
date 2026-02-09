@@ -28,7 +28,7 @@ pub mod prelude {
     pub use crate::compression::{Compressor, CompressionAlgorithm};
     pub use crate::crypto::{CryptoProvider, EncryptionKey};
     pub use crate::repository::{Repository, RepoDescriptor};
-    pub use crate::archive::{Archive, ArchiveItem};
+    pub use crate::archive::{Archive, ArchiveItem, RestoreProgress};
     pub use crate::exclusion::ExclusionList;
     pub use crate::verification::{
         VerifyReport, 

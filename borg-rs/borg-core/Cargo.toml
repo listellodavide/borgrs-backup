@@ -30,6 +30,7 @@ zstd.workspace = true
 lz4_flex.workspace = true
 flate2.workspace = true
 lzma-rs.workspace = true
+xz2 = "0.1"
 fastcdc.workspace = true
 opendal.workspace = true
 tracing.workspace = true

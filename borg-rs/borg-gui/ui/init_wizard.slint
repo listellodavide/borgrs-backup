@@ -1,0 +1,129 @@
+import { Button, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export global InitWizardLogic {
+    in-out property <int> current_step: 0;
+    in-out property <string> repo_type: "local";
+
+    // Form fields
+    in-out property <string> path_url;
+    in-out property <string> access_key;
+    in-out property <string> secret_key;
+    in-out property <string> password;
+
+    callback back();
+    callback next();
+    callback cancel();
+    callback finish();
+}
+
+component WizardStepLabel inherits Text {
+    in property <bool> active;
+    in property <bool> completed;
+    color: active ? #42A5F5 : (completed ? #66BB6A : #787878);
+    font-size: 14px;
+    font-weight: active ? 700 : 400;
+}
+
+export component InitWizardView inherits Rectangle {
+    background: #2b2b2b;
+    border-radius: 8px;
+
+    HorizontalLayout {
+        // --- Left Stepper ---
+        Rectangle {
+            width: 180px;
+            background: #232323;
+            border-top-left-radius: 8px;
+            border-bottom-left-radius: 8px;
+
+            VerticalLayout {
+                padding: 20px;
+                spacing: 20px;
+                Text { text: "INITIALIZE"; font-size: 12px; color: #555; font-weight: 800; }
+                WizardStepLabel { text: "1. Storage Type"; active: InitWizardLogic.current_step == 0; completed: InitWizardLogic.current_step > 0; }
+                WizardStepLabel { text: "2. Connection"; active: InitWizardLogic.current_step == 1; completed: InitWizardLogic.current_step > 1; }
+                WizardStepLabel { text: "3. Security"; active: InitWizardLogic.current_step == 2; completed: InitWizardLogic.current_step > 2; }
+                WizardStepLabel { text: "4. Review"; active: InitWizardLogic.current_step == 3; }
+                Rectangle {} // Spacer
+            }
+        }
+
+        // --- Right Content Area ---
+        VerticalLayout {
+            padding: 30px;
+            spacing: 20px;
+
+            // Step Content Switcher
+            if (InitWizardLogic.current_step == 0) : VerticalLayout {
+                spacing: 15px;
+                Text { text: "Select Storage Backend"; font-size: 18px; color: white; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    // Mock radio buttons/cards
+                    Button { text: "Local Directory"; primary: InitWizardLogic.repo_type == "local"; clicked => { InitWizardLogic.repo_type = "local" } }
+                    Button { text: "S3 / Cloud"; primary: InitWizardLogic.repo_type == "s3"; clicked => { InitWizardLogic.repo_type = "s3" } }
+                    Button { text: "SSH / SFTP"; primary: InitWizardLogic.repo_type == "ssh"; clicked => { InitWizardLogic.repo_type = "ssh" } }
+                }
+            }
+
+            if (InitWizardLogic.current_step == 1) : VerticalLayout {
+                spacing: 15px;
+                Text { text: "Connection Details"; font-size: 18px; color: white; }
+                Text { text: "Path or URL"; color: #aaa; }
+                LineEdit { text <=> InitWizardLogic.path_url; placeholder-text: "/path/to/repo or s3://bucket"; }
+
+                if (InitWizardLogic.repo_type == "s3") : VerticalLayout {
+                    spacing: 10px;
+                    Text { text: "Access Key"; color: #aaa; }
+                    LineEdit { text <=> InitWizardLogic.access_key; }
+                    Text { text: "Secret Key"; color: #aaa; }
+                    LineEdit { text <=> InitWizardLogic.secret_key; input-type: password; }
+                }
+            }
+
+            if (InitWizardLogic.current_step == 2) : VerticalLayout {
+                spacing: 15px;
+                Text { text: "Repository Encryption"; font-size: 18px; color: white; }
+                Text { text: "Enter a strong password to encrypt your backups."; color: #aaa; }
+                LineEdit { text <=> InitWizardLogic.password; input-type: password; placeholder-text: "New Password"; }
+                LineEdit { input-type: password; placeholder-text: "Repeat Password"; }
+            }
+
+            if (InitWizardLogic.current_step == 3) : VerticalLayout {
+                spacing: 15px;
+                Text { text: "Final Review"; font-size: 18px; color: white; }
+                Rectangle {
+                    background: #1e1e1e;
+                    padding: 10px;
+                    Text {
+                        text: "Command: borg init --encryption=repokey-blake2 " + InitWizardLogic.path_url;
+                        font-family: "Monospace"; color: #66BB6A;
+                    }
+                }
+            }
+
+            Rectangle {} // Vertical Spacer
+
+            // --- Footer Controls ---
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Cancel"; clicked => { InitWizardLogic.cancel() } }
+                Rectangle {} // Spacer
+                if (InitWizardLogic.current_step > 0) : Button {
+                    text: "Back";
+                    clicked => { InitWizardLogic.current_step -= 1 }
+                }
+                if (InitWizardLogic.current_step < 3) : Button {
+                    text: "Next";
+                    primary: true;
+                    clicked => { InitWizardLogic.current_step += 1 }
+                }
+                if (InitWizardLogic.current_step == 3) : Button {
+                    text: "Initialize Repository";
+                    primary: true;
+                    clicked => { InitWizardLogic.finish() }
+                }
+            }
+        }
+    }
+}

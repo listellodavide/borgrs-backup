@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "borg-core",
     "borg-cli",
+    "borg-gui",
 ]
 # Note: borg-daemon is Unix-only (requires systemd, Unix sockets, etc.)
 # On Windows, build with: cargo build --workspace --exclude borg-daemon

@@ -1,0 +1,189 @@
+import { Button, VerticalBox, HorizontalBox, StandardListView, ScrollView } from "std-widgets.slint";
+
+export struct ArchiveEntry {
+    name: string,
+    date: string,
+    size: string,
+}
+
+export global DashboardLogic {
+    // Repository management
+    in property <[string]> repositories: ["local-backups", "s3-photos", "work-server"];
+    in property <int> active_repo_index: 0;
+
+    // Archive data for the table
+    in property <[ArchiveEntry]> archives: [
+        { name: "daily-2023-11-20-0001", date: "2023-11-20 00:01", size: "1.2 GB" },
+        { name: "daily-2023-11-19-0001", date: "2023-11-19 00:01", size: "1.1 GB" },
+        { name: "manual-patch-apply", date: "2023-11-18 15:30", size: "850 MB" },
+        { name: "weekly-2023-W46", date: "2023-11-12 02:00", size: "4.5 GB" }
+    ];
+
+    // Terminal/Console output
+    in property <string> terminal_text: "$ borg list -r /mnt/backups/local-backups\n[2023-11-21 10:45:01] Loading repository...\n[2023-11-21 10:45:02] Fetching archive list\n(5 entries found)";
+
+    callback new_archive_clicked();
+    callback select_repo(int);
+}
+
+component ToolIcon inherits Rectangle {
+    in property <string> icon_text;
+    in property <bool> active;
+    callback clicked <=> touch.clicked;
+
+    height: 40px;
+    width: 40px;
+    background: active ? #353b3d : transparent;
+    border-left-width: active ? 2px : 0px;
+    border-left-color: #389fd6;
+
+    touch := TouchArea {}
+
+    Text {
+        text: root.icon_text;
+        font-size: 18px;
+        color: active ? #ffffff : #858585;
+    }
+}
+
+export component DashboardView inherits Rectangle {
+    background: #1e1f22; // Modern IDE Dark
+
+    VerticalLayout {
+        // --- Top Menu Bar ---
+        Rectangle {
+            height: 35px;
+            background: #2b2d30;
+            HorizontalLayout {
+                padding-left: 10px; spacing: 15px;
+                Text { text: "File"; color: #bbbbbb; vertical-alignment: center; }
+                Text { text: "Edit"; color: #bbbbbb; vertical-alignment: center; }
+                Text { text: "View"; color: #bbbbbb; vertical-alignment: center; }
+                Text { text: "Repositories"; color: #389fd6; vertical-alignment: center; font-weight: 700; }
+                Rectangle {} // Spacer
+                Text { text: "🔍"; vertical-alignment: center; color: #bbbbbb; }
+                Text { text: "⚙️"; vertical-alignment: center; color: #bbbbbb; }
+                Rectangle { width: 10px; }
+            }
+        }
+
+        HorizontalLayout {
+            // --- Side Tool Window Bar (IntelliJ Style) ---
+            Rectangle {
+                width: 45px;
+                background: #2b2d30;
+                border-right-width: 1px;
+                border-right-color: #393b40;
+
+                VerticalLayout {
+                    padding-top: 10px;
+                    ToolIcon { icon_text: "📂"; active: true; }
+                    ToolIcon { icon_text: "☁️"; active: false; }
+                    ToolIcon { icon_text: "🖥️"; active: false; }
+                    Rectangle {} // Spacer
+                    ToolIcon { icon_text: "💾"; active: false; }
+                    ToolIcon { icon_text: "🕒"; active: false; }
+                }
+            }
+
+            // --- Main Content Area ---
+            VerticalLayout {
+                // Breadcrumbs & Actions
+                Rectangle {
+                    height: 45px;
+                    background: #1e1f22;
+                    HorizontalLayout {
+                        padding: 10px; spacing: 10px;
+                        Text { text: "local-backups"; color: #858585; vertical-alignment: center; }
+                        Text { text: ">"; color: #555555; vertical-alignment: center; }
+                        Text { text: "archives"; color: #bbbbbb; vertical-alignment: center; }
+
+                        Rectangle {} // Spacer
+
+                        Button {
+                            text: "+ NEW ARCHIVE";
+                            primary: true;
+                            clicked => { DashboardLogic.new_archive_clicked() }
+                        }
+                    }
+                }
+
+                // Table Headers
+                Rectangle {
+                    height: 30px;
+                    background: #2b2d30;
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        Text { text: "Name"; width: 250px; color: #858585; font-size: 12px; vertical-alignment: center; }
+                        Text { text: "Date"; color: #858585; font-size: 12px; vertical-alignment: center; }
+                        Rectangle {}
+                    }
+                }
+
+                // Table Content
+                ScrollView {
+                    VerticalLayout {
+                        padding: 5px;
+                        for entry in DashboardLogic.archives: Rectangle {
+                            height: 35px;
+                            background: touch_row.has-hover ? #2d2f33 : transparent;
+                            touch_row := TouchArea {}
+                            HorizontalLayout {
+                                padding-left: 15px;
+                                Text { text: entry.name; width: 250px; color: #bcbec4; vertical-alignment: center; font-family: "JetBrains Mono"; }
+                                Text { text: entry.date; color: #858585; vertical-alignment: center; }
+                            }
+                        }
+                        Rectangle {} // Fill remaining space
+                    }
+                }
+
+                // --- Bottom Terminal ---
+                Rectangle {
+                    height: 180px;
+                    background: #1e1f22;
+                    border-top-width: 1px;
+                    border-top-color: #393b40;
+
+                    VerticalLayout {
+                        // Terminal Tabs
+                        Rectangle {
+                            height: 30px;
+                            background: #2b2d30;
+                            HorizontalLayout {
+                                padding-left: 15px; spacing: 20px;
+                                Text { text: "TERMINAL"; color: #ffffff; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                                Text { text: "OUTPUT"; color: #858585; font-size: 11px; vertical-alignment: center; }
+                                Rectangle {}
+                                Text { text: "✕"; color: #858585; vertical-alignment: center; padding-right: 10px; }
+                            }
+                        }
+                        // Console Text
+                        ScrollView {
+                            padding: 10px;
+                            Text {
+                                text: DashboardLogic.terminal_text;
+                                color: #bcbec4;
+                                font-family: "JetBrains Mono";
+                                font-size: 12px;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Status Bar ---
+        Rectangle {
+            height: 25px;
+            background: #2b2d30;
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 10px; spacing: 15px;
+                Text { text: "● All systems nominal"; color: #62b47b; font-size: 11px; vertical-alignment: center; }
+                Text { text: "Last sync: 2m ago"; color: #858585; font-size: 11px; vertical-alignment: center; }
+                Rectangle {}
+                Text { text: "Borg 1.2.4"; color: #bbbbbb; font-size: 11px; vertical-alignment: center; font-weight: 700; }
+            }
+        }
+    }
+}

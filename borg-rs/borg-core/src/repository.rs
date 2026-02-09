@@ -359,6 +359,11 @@ impl Repository {
         })
     }
 
+    /// Set the compressor to use for subsequent operations
+    pub fn set_compressor(&mut self, compressor: Compressor) {
+        self.compressor = compressor;
+    }
+
     pub fn has_chunk(&self, id: &ChunkId) -> bool {
         self.chunk_cache.contains(id)
     }
@@ -415,6 +420,11 @@ impl Repository {
                 .map_err(|e| BorgError::Deserialization(e.to_string()))?
         };
 
+        // The compressor instance here is used for decompression.
+        // Since CompressedData contains the algorithm ID, the compressor will
+        // automatically select the correct algorithm to decompress.
+        // We don't need to change the compressor instance on the repository
+        // because decompression is stateless regarding the configuration (except for algo ID lookup).
         let data = self.compressor.decompress(&compressed)?;
 
         let computed_id = ChunkId::from_data(&data);

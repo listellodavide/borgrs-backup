@@ -1,4 +1,5 @@
 use crate::chunker::{choose_profile_for_size, ChunkId, Chunker, ChunkerProfile};
+use crate::compression::CompressionConfig;
 use crate::error::{BorgError, Result};
 use crate::exclusion::ExclusionList;
 use crate::repository::Repository;
@@ -206,6 +207,8 @@ pub struct ArchiveMetadata {
     pub tags: Option<Vec<String>>,
     /// Original paths backed up
     pub original_paths: Option<Vec<PathBuf>>,
+    /// Compression configuration used for this archive
+    pub compression: Option<CompressionConfig>,
 }
 
 /// A complete archive containing items and metadata
@@ -274,6 +277,8 @@ pub struct ArchiveCreator<'a> {
     progress: Box<dyn BackupProgress>,
     /// Hard link tracking (inode -> first path)
     hardlinks: HashMap<u64, PathBuf>,
+    /// Compression configuration
+    compression_config: Option<CompressionConfig>,
 }
 
 impl<'a> ArchiveCreator<'a> {
@@ -285,6 +290,7 @@ impl<'a> ArchiveCreator<'a> {
             exclusions: ExclusionList::new(),
             progress: Box::new(NullProgress),
             hardlinks: HashMap::new(),
+            compression_config: None,
         }
     }
 
@@ -303,6 +309,12 @@ impl<'a> ArchiveCreator<'a> {
     /// Set progress reporter
     pub fn with_progress(mut self, progress: Box<dyn BackupProgress>) -> Self {
         self.progress = progress;
+        self
+    }
+
+    /// Set compression configuration
+    pub fn with_compression(mut self, config: CompressionConfig) -> Self {
+        self.compression_config = Some(config);
         self
     }
 
@@ -325,6 +337,12 @@ impl<'a> ArchiveCreator<'a> {
             });
         }
 
+        // Configure repository compressor if compression config is provided
+        if let Some(config) = &self.compression_config {
+            use crate::compression::Compressor;
+            self.repo.set_compressor(Compressor::new(config.clone()));
+        }
+
         let metadata = ArchiveMetadata {
             name: name.to_string(),
             time: Utc::now(),
@@ -334,6 +352,7 @@ impl<'a> ArchiveCreator<'a> {
             comment,
             tags,
             original_paths: Some(paths.to_vec()),
+            compression: self.compression_config.clone(),
         };
 
         let mut items = Vec::new();
@@ -518,103 +537,56 @@ impl<'a> ArchiveCreator<'a> {
     }
 }
 
+/// Progress callback for restore operations
+pub trait RestoreProgress: Send + Sync {
+    /// Called when restore starts, with total files and bytes
+    fn on_start(&self, total_files: u64, total_bytes: u64);
+    /// Called when starting to restore a file
+    fn on_file_start(&self, path: &Path, size: u64);
+    /// Called when a file is completed
+    fn on_file_complete(&self, path: &Path);
+    /// Called when an error occurs (non-fatal)
+    fn on_error(&self, path: &Path, error: &str);
+    /// Called when the restore is finished
+    fn on_finish(&self);
+}
+
+/// Null progress reporter for restore
+pub struct NullRestoreProgress;
+impl RestoreProgress for NullRestoreProgress {
+    fn on_start(&self, _total_files: u64, _total_bytes: u64) {}
+    fn on_file_start(&self, _path: &Path, _size: u64) {}
+    fn on_file_complete(&self, _path: &Path) {}
+    fn on_error(&self, _path: &Path, _error: &str) {}
+    fn on_finish(&self) {}
+}
+
 /// Archive restorer for restoring backups
 pub struct ArchiveRestorer<'a> {
     /// Repository to read from
     repo: &'a Repository,
+    progress: Box<dyn RestoreProgress>,
 }
 
 impl<'a> ArchiveRestorer<'a> {
     /// Create a new restorer
     pub fn new(repo: &'a Repository) -> Self {
-        Self { repo }
+        Self {
+            repo,
+            progress: Box::new(NullRestoreProgress),
+        }
+    }
+
+    /// Set progress reporter
+    pub fn with_progress(mut self, progress: Box<dyn RestoreProgress>) -> Self {
+        self.progress = progress;
+        self
     }
 
     /// Restore an archive to a destination path
     #[instrument(skip(self))]
     pub async fn restore(&self, archive_name: &str, dest: &Path) -> Result<RestoreStats> {
-        info!("Restoring archive '{}' to {}", archive_name, dest.display());
-
-        let archive = self.load_archive(archive_name).await?;
-        let mut stats = RestoreStats::default();
-
-        fs::create_dir_all(dest)?;
-
-        // Sort items to ensure directories are created before their contents
-        let mut items = archive.items.clone();
-        items.sort_by(|a, b| a.path.cmp(&b.path));
-
-        // First pass: Restore directories, files, and symlinks
-        for item in &items {
-            if item.item_type == ItemType::Hardlink {
-                continue;
-            }
-
-            let target_path = dest.join(&item.path);
-
-            match item.item_type {
-                ItemType::Directory => {
-                    fs::create_dir_all(&target_path)?;
-                    self.restore_attributes(&target_path, &item.attrs)?;
-                    stats.dirs_restored += 1;
-                }
-                ItemType::File => {
-                    if let Some(parent) = target_path.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-
-                    // Reconstruct file from chunks
-                    let mut file_data = Vec::new();
-                    for chunk_id in &item.chunks {
-                        let chunk = self.repo.get_chunk(chunk_id).await?;
-                        file_data.extend_from_slice(&chunk.data);
-                    }
-
-                    fs::write(&target_path, &file_data)?;
-                    self.restore_attributes(&target_path, &item.attrs)?;
-                    stats.files_restored += 1;
-                    stats.bytes_restored += file_data.len() as u64;
-                }
-                ItemType::Symlink => {
-                    if let Some(target) = &item.symlink_target {
-                        if let Some(parent) = target_path.parent() {
-                            fs::create_dir_all(parent)?;
-                        }
-                        #[cfg(unix)]
-                        std::os::unix::fs::symlink(target, &target_path)?;
-                        stats.symlinks_restored += 1;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Second pass: Restore hardlinks
-        for item in &items {
-            if item.item_type == ItemType::Hardlink {
-                let target_path = dest.join(&item.path);
-                if let Some(link_target) = &item.hardlink_target {
-                    let link_source = dest.join(link_target);
-                    if let Some(parent) = target_path.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    // Ensure the source exists before linking
-                    if link_source.exists() {
-                        fs::hard_link(&link_source, &target_path)?;
-                        stats.hardlinks_restored += 1;
-                    } else {
-                        warn!("Hardlink source not found: {}", link_source.display());
-                    }
-                }
-            }
-        }
-
-        info!(
-            "Restored {} files, {} dirs, {} bytes",
-            stats.files_restored, stats.dirs_restored, stats.bytes_restored
-        );
-
-        Ok(stats)
+        self.restore_paths(archive_name, dest, &[]).await
     }
 
     /// Restore specific paths from an archive to a destination
@@ -628,8 +600,6 @@ impl<'a> ArchiveRestorer<'a> {
         fs::create_dir_all(dest)?;
 
         // Filter items based on requested paths
-        // If paths is empty, restore everything (default behavior)
-        // Otherwise, only restore items that match one of the requested paths
         let items: Vec<_> = if paths.is_empty() {
             archive.items.clone()
         } else {
@@ -637,6 +607,11 @@ impl<'a> ArchiveRestorer<'a> {
                 paths.iter().any(|req_path| item.path == *req_path || item.path.starts_with(req_path))
             }).collect()
         };
+
+        // Calculate totals for progress bar
+        let total_files = items.iter().filter(|i| i.item_type == ItemType::File).count() as u64;
+        let total_bytes = items.iter().filter(|i| i.item_type == ItemType::File).map(|i| i.size).sum();
+        self.progress.on_start(total_files, total_bytes);
 
         // Sort items to ensure directories are created before their contents
         let mut items = items;
@@ -652,34 +627,63 @@ impl<'a> ArchiveRestorer<'a> {
             
             match item.item_type {
                 ItemType::Directory => {
-                    fs::create_dir_all(&target_path)?;
-                    self.restore_attributes(&target_path, &item.attrs)?;
+                    if let Err(e) = fs::create_dir_all(&target_path) {
+                        self.progress.on_error(&target_path, &e.to_string());
+                        continue;
+                    }
+                    if let Err(e) = self.restore_attributes(&target_path, &item.attrs) {
+                        self.progress.on_error(&target_path, &e.to_string());
+                    }
                     stats.dirs_restored += 1;
                 }
                 ItemType::File => {
+                    self.progress.on_file_start(&target_path, item.size);
                     if let Some(parent) = target_path.parent() {
-                        fs::create_dir_all(parent)?;
+                        if let Err(e) = fs::create_dir_all(parent) {
+                            self.progress.on_error(&target_path, &e.to_string());
+                            continue;
+                        }
                     }
                     
                     // Reconstruct file from chunks
                     let mut file_data = Vec::new();
+                    let mut error_occurred = false;
                     for chunk_id in &item.chunks {
-                        let chunk = self.repo.get_chunk(chunk_id).await?;
-                        file_data.extend_from_slice(&chunk.data);
+                        match self.repo.get_chunk(chunk_id).await {
+                            Ok(chunk) => file_data.extend_from_slice(&chunk.data),
+                            Err(e) => {
+                                self.progress.on_error(&target_path, &e.to_string());
+                                error_occurred = true;
+                                break;
+                            }
+                        }
                     }
-                    
-                    fs::write(&target_path, &file_data)?;
-                    self.restore_attributes(&target_path, &item.attrs)?;
+
+                    if error_occurred { continue; }
+
+                    if let Err(e) = fs::write(&target_path, &file_data) {
+                        self.progress.on_error(&target_path, &e.to_string());
+                        continue;
+                    }
+                    if let Err(e) = self.restore_attributes(&target_path, &item.attrs) {
+                        self.progress.on_error(&target_path, &e.to_string());
+                    }
                     stats.files_restored += 1;
                     stats.bytes_restored += file_data.len() as u64;
+                    self.progress.on_file_complete(&target_path);
                 }
                 ItemType::Symlink => {
                     if let Some(target) = &item.symlink_target {
                         if let Some(parent) = target_path.parent() {
-                            fs::create_dir_all(parent)?;
+                            if let Err(e) = fs::create_dir_all(parent) {
+                                self.progress.on_error(&target_path, &e.to_string());
+                                continue;
+                            }
                         }
                         #[cfg(unix)]
-                        std::os::unix::fs::symlink(target, &target_path)?;
+                        if let Err(e) = std::os::unix::fs::symlink(target, &target_path) {
+                            self.progress.on_error(&target_path, &e.to_string());
+                        }
                         stats.symlinks_restored += 1;
                     }
                 }
@@ -694,19 +698,25 @@ impl<'a> ArchiveRestorer<'a> {
                 if let Some(link_target) = &item.hardlink_target {
                     let link_source = dest.join(link_target);
                     if let Some(parent) = target_path.parent() {
-                        fs::create_dir_all(parent)?;
+                        if let Err(e) = fs::create_dir_all(parent) {
+                            self.progress.on_error(&target_path, &e.to_string());
+                            continue;
+                        }
                     }
-                    // Ensure the source exists before linking
                     if link_source.exists() {
-                        fs::hard_link(&link_source, &target_path)?;
+                        if let Err(e) = fs::hard_link(&link_source, &target_path) {
+                            self.progress.on_error(&target_path, &e.to_string());
+                        }
                         stats.hardlinks_restored += 1;
                     } else {
                         warn!("Hardlink source not found: {}", link_source.display());
+                        self.progress.on_error(&target_path, "hardlink source not found");
                     }
                 }
             }
         }
 
+        self.progress.on_finish();
         info!(
             "Restored {} files, {} dirs, {} bytes",
             stats.files_restored, stats.dirs_restored, stats.bytes_restored
@@ -786,6 +796,7 @@ impl<'a> ArchiveRestorer<'a> {
                     comment: None,
                     tags: None,
                     original_paths: None,
+                    compression: None,
                 },
                 items: v1.items.into_iter().map(convert_item).collect(),
                 stats: v1.stats,
@@ -983,6 +994,7 @@ mod tests {
             comment: Some("test comment".to_string()),
             tags: Some(vec!["tag1".to_string(), "tag2".to_string()]),
             original_paths: Some(vec![PathBuf::from("/tmp/test")]),
+            compression: None,
         };
 
         let archive = Archive {
