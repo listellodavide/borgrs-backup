@@ -25,6 +25,8 @@ pub struct Snapshot {
     pub cmdline: Vec<String>,
     /// Optional comment
     pub comment: Option<String>,
+    /// Optional tags
+    pub tags: Option<Vec<String>>,
 }
 
 /// A tree represents a directory structure

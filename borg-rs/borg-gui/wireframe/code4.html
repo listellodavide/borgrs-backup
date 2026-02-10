@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "primary": "#137fec",
+            "background-light": "#f6f7f8",
+            "background-dark": "#101922",
+            "neutral-800": "#1e2936",
+            "neutral-900": "#161e27",
+            "border-ui": "#2a3746",
+          },
+          fontFamily: {
+            "display": ["Manrope"],
+            "mono": ["JetBrains Mono"]
+          },
+          borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+        },
+      },
+    }
+  </script>
+<title>Backup Schedule Manager</title>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen flex justify-center items-start">
+<!-- Main Mobile Container -->
+<div class="w-full max-w-md bg-white dark:bg-background-dark min-h-screen flex flex-col shadow-2xl relative overflow-hidden">
+<!-- Top Header Section -->
+<header class="pt-12 pb-6 px-6 bg-white/5 dark:bg-neutral-900/50 border-b border-border-ui sticky top-0 z-10 backdrop-blur-md">
+<div class="flex justify-between items-center mb-6">
+<div>
+<h1 class="text-2xl font-bold tracking-tight">Schedule Tasks</h1>
+<p class="text-xs text-slate-500 dark:text-slate-400 font-mono mt-1">BorgBackup Engine v1.2.4</p>
+</div>
+<button class="bg-primary hover:bg-primary/90 text-white p-3 rounded-xl shadow-lg shadow-primary/20 flex items-center justify-center transition-all">
+<span class="material-icons-round">add</span>
+</button>
+</div>
+<!-- Quick Stats / Filter Tab -->
+<div class="flex gap-2">
+<div class="px-4 py-2 bg-primary/10 border border-primary/30 rounded-full text-xs font-semibold text-primary">
+          All Tasks (4)
+        </div>
+<div class="px-4 py-2 bg-slate-100 dark:bg-neutral-800 border border-border-ui rounded-full text-xs font-semibold text-slate-500">
+          Active (3)
+        </div>
+</div>
+</header>
+<!-- Task List (Main Area) -->
+<main class="flex-1 overflow-y-auto px-6 py-6 space-y-4 pb-32">
+<!-- Task Card 1 -->
+<div class="bg-white dark:bg-neutral-800/40 border border-slate-200 dark:border-border-ui rounded-xl p-4 transition-all hover:border-primary/50 group">
+<div class="flex justify-between items-start mb-3">
+<div class="flex-1">
+<h3 class="font-bold text-sm tracking-wide group-hover:text-primary transition-colors uppercase">Main-Vault-Offsite</h3>
+<p class="text-[10px] font-mono text-slate-500 mt-1">/mnt/storage/backups/borg/main</p>
+</div>
+<div class="flex items-center gap-3">
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-slate-300 dark:bg-neutral-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-4 mt-4 border-t border-slate-100 dark:border-border-ui pt-4">
+<div>
+<span class="text-[10px] text-slate-500 block uppercase font-bold tracking-widest mb-1">Frequency</span>
+<div class="flex items-center gap-1.5 text-xs">
+<span class="material-icons-round text-sm text-primary">event_repeat</span>
+<span>Mon, Wed, Fri @ 22:00</span>
+</div>
+</div>
+<div>
+<span class="text-[10px] text-slate-500 block uppercase font-bold tracking-widest mb-1">Last Run</span>
+<div class="flex items-center gap-1.5 text-xs font-mono">
+<span class="material-icons-round text-sm text-emerald-500">check_circle</span>
+<span>2023-11-04 22:01</span>
+</div>
+</div>
+</div>
+<div class="flex justify-end gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-border-ui/50">
+<button class="p-1.5 text-slate-400 hover:text-primary transition-colors"><span class="material-icons-round text-xl">edit</span></button>
+<button class="p-1.5 text-slate-400 hover:text-red-500 transition-colors"><span class="material-icons-round text-xl">delete_outline</span></button>
+</div>
+</div>
+<!-- Task Card 2 -->
+<div class="bg-white dark:bg-neutral-800/40 border border-slate-200 dark:border-border-ui rounded-xl p-4 transition-all hover:border-primary/50 group">
+<div class="flex justify-between items-start mb-3">
+<div class="flex-1">
+<h3 class="font-bold text-sm tracking-wide group-hover:text-primary transition-colors uppercase">Personal-Media-Sync</h3>
+<p class="text-[10px] font-mono text-slate-500 mt-1">/media/ext/borg_repo</p>
+</div>
+<div class="flex items-center gap-3">
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-slate-300 dark:bg-neutral-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-4 mt-4 border-t border-slate-100 dark:border-border-ui pt-4">
+<div>
+<span class="text-[10px] text-slate-500 block uppercase font-bold tracking-widest mb-1">Frequency</span>
+<div class="flex items-center gap-1.5 text-xs">
+<span class="material-icons-round text-sm text-primary">schedule</span>
+<span>Daily @ 03:00</span>
+</div>
+</div>
+<div>
+<span class="text-[10px] text-slate-500 block uppercase font-bold tracking-widest mb-1">Last Run</span>
+<div class="flex items-center gap-1.5 text-xs font-mono">
+<span class="material-icons-round text-sm text-emerald-500">check_circle</span>
+<span>2023-11-05 03:00</span>
+</div>
+</div>
+</div>
+<div class="flex justify-end gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-border-ui/50">
+<button class="p-1.5 text-slate-400 hover:text-primary transition-colors"><span class="material-icons-round text-xl">edit</span></button>
+<button class="p-1.5 text-slate-400 hover:text-red-500 transition-colors"><span class="material-icons-round text-xl">delete_outline</span></button>
+</div>
+</div>
+<!-- Task Card 3 (Inactive) -->
+<div class="bg-slate-50 dark:bg-neutral-800/20 border border-dashed border-slate-200 dark:border-border-ui rounded-xl p-4 opacity-70">
+<div class="flex justify-between items-start mb-3">
+<div class="flex-1">
+<h3 class="font-bold text-sm tracking-wide uppercase">Config-Backup</h3>
+<p class="text-[10px] font-mono text-slate-500 mt-1">/home/user/.config/borg</p>
+</div>
+<div class="flex items-center gap-3">
+<label class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-slate-300 dark:bg-neutral-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-4 mt-4 border-t border-slate-100 dark:border-border-ui pt-4">
+<div>
+<span class="text-[10px] text-slate-500 block uppercase font-bold tracking-widest mb-1">Frequency</span>
+<div class="flex items-center gap-1.5 text-xs">
+<span class="material-icons-round text-sm">history</span>
+<span>Monthly - 1st @ 00:00</span>
+</div>
+</div>
+<div>
+<span class="text-[10px] text-slate-500 block uppercase font-bold tracking-widest mb-1">Last Run</span>
+<div class="flex items-center gap-1.5 text-xs font-mono">
+<span class="material-icons-round text-sm">info_outline</span>
+<span>None</span>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Sheet / Drawer (Create Task) -->
+<div class="absolute bottom-0 left-0 right-0 bg-white dark:bg-neutral-900 rounded-t-3xl border-t border-border-ui shadow-[0_-20px_50px_rgba(0,0,0,0.5)] z-20">
+<div class="w-12 h-1.5 bg-slate-300 dark:bg-neutral-700 rounded-full mx-auto my-4"></div>
+<div class="px-6 pb-8">
+<h2 class="text-xl font-bold mb-6 flex items-center gap-2">
+<span class="material-icons-round text-primary">add_task</span>
+          Create New Task
+        </h2>
+<div class="space-y-5">
+<!-- Repo Selector -->
+<div>
+<label class="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-2 block">Repository Selector</label>
+<div class="relative">
+<select class="w-full bg-slate-100 dark:bg-neutral-800 border-none rounded-lg py-3 px-4 text-sm appearance-none focus:ring-2 focus:ring-primary/50 font-medium">
+<option>Main-Vault-Offsite</option>
+<option>Personal-Media-Sync</option>
+<option>New Remote Repository...</option>
+</select>
+<span class="material-icons-round absolute right-3 top-3 text-slate-500 pointer-events-none">expand_more</span>
+</div>
+</div>
+<!-- Archive Template -->
+<div>
+<label class="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-2 block">Archive Template</label>
+<input class="w-full bg-slate-100 dark:bg-neutral-800 border-none rounded-lg py-3 px-4 text-sm font-mono focus:ring-2 focus:ring-primary/50" placeholder="{hostname}-{now}" type="text" value="{hostname}-{now}"/>
+</div>
+<!-- Frequency Grid -->
+<div class="flex gap-2">
+<button class="flex-1 py-2 rounded-lg text-xs font-bold bg-slate-100 dark:bg-neutral-800 text-slate-500 hover:text-primary border-2 border-transparent transition-all">DAILY</button>
+<button class="flex-1 py-2 rounded-lg text-xs font-bold bg-primary/20 text-primary border-2 border-primary/40 transition-all">WEEKLY</button>
+<button class="flex-1 py-2 rounded-lg text-xs font-bold bg-slate-100 dark:bg-neutral-800 text-slate-500 hover:text-primary border-2 border-transparent transition-all">MONTHLY</button>
+</div>
+<!-- Day of Week Picker -->
+<div class="flex justify-between items-center bg-slate-100 dark:bg-neutral-800 p-2 rounded-xl">
+<div class="w-8 h-8 flex items-center justify-center rounded-full bg-primary text-white text-[10px] font-bold">M</div>
+<div class="w-8 h-8 flex items-center justify-center rounded-full text-slate-500 text-[10px] font-bold">T</div>
+<div class="w-8 h-8 flex items-center justify-center rounded-full bg-primary/20 text-primary text-[10px] font-bold">W</div>
+<div class="w-8 h-8 flex items-center justify-center rounded-full text-slate-500 text-[10px] font-bold">T</div>
+<div class="w-8 h-8 flex items-center justify-center rounded-full bg-primary/20 text-primary text-[10px] font-bold">F</div>
+<div class="w-8 h-8 flex items-center justify-center rounded-full text-slate-500 text-[10px] font-bold">S</div>
+<div class="w-8 h-8 flex items-center justify-center rounded-full text-slate-500 text-[10px] font-bold">S</div>
+</div>
+<!-- Time Picker & Credentials -->
+<div class="flex gap-4 items-end">
+<div class="flex-1">
+<label class="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-2 block">Execution Time (24h)</label>
+<div class="flex items-center gap-2">
+<input class="w-full bg-slate-100 dark:bg-neutral-800 border-none rounded-lg py-3 text-center text-lg font-mono focus:ring-2 focus:ring-primary/50" type="number" value="22"/>
+<span class="font-bold">:</span>
+<input class="w-full bg-slate-100 dark:bg-neutral-800 border-none rounded-lg py-3 text-center text-lg font-mono focus:ring-2 focus:ring-primary/50" type="number" value="00"/>
+</div>
+</div>
+<div class="flex-1 flex flex-col items-center justify-center bg-slate-100 dark:bg-neutral-800 rounded-lg py-3 px-4 h-[58px]">
+<span class="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1 block">Saved Creds</span>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-8 h-4 bg-slate-300 dark:bg-neutral-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[1px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500"></div>
+</label>
+</div>
+</div>
+<!-- Action Button -->
+<button class="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-xl shadow-primary/30 active:scale-95 transition-all mt-4">
+            SAVE BACKUP SCHEDULE
+          </button>
+</div>
+</div>
+</div>
+<!-- Bottom Navigation Mock -->
+<nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto h-20 bg-white/10 dark:bg-background-dark/80 backdrop-blur-xl border-t border-border-ui flex items-center justify-around px-8 z-30">
+<div class="text-slate-400"><span class="material-icons-round">storage</span></div>
+<div class="text-primary relative">
+<span class="material-icons-round">history</span>
+<div class="absolute -top-1 -right-1 w-2 h-2 bg-primary rounded-full"></div>
+</div>
+<div class="text-slate-400"><span class="material-icons-round">settings</span></div>
+<div class="text-slate-400"><span class="material-icons-round">terminal</span></div>
+</nav>
+</div>
+</body></html>

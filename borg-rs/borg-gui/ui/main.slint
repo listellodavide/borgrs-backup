@@ -7,7 +7,7 @@ import { RestoreView } from "restore.slint";
 import { NewArchiveWizardView } from "new_archive_wizard.slint";
 import { PasswordDialog } from "components/password_dialog.slint";
 import { SchedulerView } from "scheduler.slint";
-
+import { ArchiveContentView } from "archive_content.slint";
 import { ArchiveFilesDialog } from "archive_files_dialog.slint";
 
 // --- Logic Globals ---
@@ -32,12 +32,16 @@ export component MainWindow inherits Window {
             if (AppState.current_view == "new_archive") : NewArchiveWizardView {}
             if (AppState.current_view == "scheduled_tasks") : SchedulerView {}
 
-            if (AppState.show_password_dialog) : PasswordDialog {}
+            if (AppState.show_password_dialog) : PasswordDialog { z: 100; }
+            if (ArchiveContentLogic.show_dialog) : ArchiveContentView { z: 90; }
+            if (ArchiveFilesLogic.show_archive_files_dialog) : ArchiveFilesDialog { z: 110; }
             
-            if (ArchiveContentLogic.show_dialog) : ArchiveFilesDialog {
-                close-requested => {
-                    ArchiveContentLogic.show_dialog = false;
-                }
+            // Debug overlay to check if property is true
+            if (ArchiveFilesLogic.show_archive_files_dialog) : Text {
+                x: 0; y: 0;
+                text: "DIALOG ACTIVE";
+                color: red;
+                z: 200;
             }
         }
     }

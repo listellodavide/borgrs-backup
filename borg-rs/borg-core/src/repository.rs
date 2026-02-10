@@ -33,6 +33,10 @@ pub struct ArchiveRef {
     pub name: String,
     pub id: ChunkId,
     pub time: chrono::DateTime<chrono::Utc>,
+    pub hostname: String,
+    pub username: String,
+    pub comment: Option<String>,
+    pub tags: Option<Vec<String>>,
 }
 
 /// Repository Descriptor (Immutable, written once at init)
@@ -497,6 +501,7 @@ impl Repository {
             username: archive.metadata.username,
             cmdline: archive.metadata.cmdline,
             comment: archive.metadata.comment,
+            tags: archive.metadata.tags,
         };
 
         self.commit_snapshot(&snapshot).await
@@ -509,6 +514,10 @@ impl Repository {
             name: s.name,
             id: s.root_tree,
             time: s.time,
+            hostname: s.hostname,
+            username: s.username,
+            comment: s.comment,
+            tags: s.tags,
         }).collect();
 
         Ok(Manifest {

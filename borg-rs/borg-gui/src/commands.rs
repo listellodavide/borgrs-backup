@@ -336,3 +336,63 @@ pub async fn list_archive_files(
 
     Ok(entries)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_create_and_list_archive() -> Result<()> {
+        let repo_dir = tempdir()?;
+        let repo_path = repo_dir.path().to_str().unwrap();
+
+        // 1. Init Repo
+        init_repository("local", "test-repo", repo_path, None, None, None).await?;
+
+        // 2. Create source files
+        let src_dir = tempdir()?;
+        let file1_path = src_dir.path().join("file1.txt");
+        let mut file1 = File::create(&file1_path)?;
+        file1.write_all(b"content1")?;
+
+        let file2_path = src_dir.path().join("file2.txt");
+        let mut file2 = File::create(&file2_path)?;
+        file2.write_all(b"content2")?;
+
+        let paths = vec![
+            file1_path.to_str().unwrap().to_string(),
+            file2_path.to_str().unwrap().to_string(),
+        ];
+
+        // 3. Create Archive
+        let res = create_archive(
+            repo_path,
+            None,
+            "test-archive",
+            paths,
+            "none",
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(res.is_ok());
+
+        // 4. List Files
+        let files = list_archive_files(repo_path, None, "test-archive").await?;
+
+        // 5. Verify contents
+        let paths_found: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+        println!("Found paths in archive: {:?}", paths_found);
+
+        // Depending on mapping logic in create_archive, paths might be "file1.txt" or "/file1.txt"
+        assert!(paths_found.iter().any(|p| p.ends_with("file1.txt")));
+        assert!(paths_found.iter().any(|p| p.ends_with("file2.txt")));
+
+        Ok(())
+    }
+}

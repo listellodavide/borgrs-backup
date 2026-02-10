@@ -192,6 +192,11 @@ export component DashboardView inherits Rectangle {
                                     Text { text: entry.date; width: 150px; color: Theme.text-muted; vertical-alignment: center; }
                                     Rectangle {}
                                     Button {
+                                        text: "Show";
+                                        clicked => { DashboardLogic.archive_double_clicked(entry) }
+                                    }
+                                    Rectangle { width: 10px; }
+                                    Button {
                                         text: "Restore";
                                         clicked => { DashboardLogic.open_restore(entry) }
                                     }

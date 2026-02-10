@@ -51,6 +51,18 @@ pub struct ScheduledTask {
     pub archive_name: String,
     pub schedule: BackupSchedule,
     pub execution_count: i32,
+    #[serde(default = "default_active")]
+    pub active: bool,
+    #[serde(default = "default_last_run")]
+    pub last_run: String,
+}
+
+fn default_active() -> bool {
+    true
+}
+
+fn default_last_run() -> String {
+    "Never".to_string()
 }
 
 #[derive(Debug, Default)]
@@ -248,6 +260,8 @@ mod tests {
                 run_on_boot_if_missed: true,
             },
             execution_count: 0,
+            active: true,
+            last_run: "Never".to_string(),
         }];
 
         let save_result = save_scheduled_tasks_to_path(&tasks, &scheduled_tasks_path);

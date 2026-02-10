@@ -65,6 +65,8 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                 run_on_boot_if_missed: t.schedule.run_on_boot_if_missed,
             },
             execution_count: t.execution_count,
+            active: t.active,
+            last_run: t.last_run.into(),
         }
     }).collect();
     scheduler_logic.set_tasks(std::rc::Rc::new(VecModel::from(slint_tasks)).into());
@@ -93,6 +95,7 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                         scheduler.set_selected_task_minute(task.schedule.minute);
                         scheduler.set_selected_task_run_on_boot(task.schedule.run_on_boot_if_missed);
                         scheduler.set_selected_task_execution_count(task.execution_count);
+                        scheduler.set_selected_task_active(task.active);
                     }
                 }
             }
@@ -211,6 +214,8 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                         run_on_boot_if_missed: true,
                     },
                     execution_count: 0,
+                    active: true,
+                    last_run: "Never".into(),
                 };
                 let mut tasks: Vec<super::ScheduledTask> = scheduler.get_tasks().iter().collect();
                 tasks.push(new_task);
@@ -227,6 +232,18 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
         move || {
             if let Some(window) = window_weak.upgrade() {
                 let scheduler = window.global::<SchedulerLogic>();
+
+                // Get the last_run from the existing task if it exists
+                let last_run = {
+                    let tasks: Vec<super::ScheduledTask> = scheduler.get_tasks().iter().collect();
+                    let index = scheduler.get_selected_task_index() as usize;
+                    if index < tasks.len() {
+                        tasks[index].last_run.clone()
+                    } else {
+                        "Never".into()
+                    }
+                };
+
                 let rust_task = ScheduledTask {
                     task_name: scheduler.get_selected_task_name().to_string(),
                     repo_name: scheduler.get_selected_task_repo_name().to_string(),
@@ -245,15 +262,17 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                         run_on_boot_if_missed: scheduler.get_selected_task_run_on_boot(),
                     },
                     execution_count: scheduler.get_selected_task_execution_count(),
+                    active: scheduler.get_selected_task_active(),
+                    last_run: last_run.to_string(),
                 };
 
                 println!("Saving task: {}", rust_task.task_name);
 
                 let mut s = state_clone.lock().unwrap();
                 if let Some(pos) = s.scheduled_tasks.iter().position(|t| t.task_name == rust_task.task_name) {
-                    s.scheduled_tasks[pos] = rust_task;
+                    s.scheduled_tasks[pos] = rust_task.clone();
                 } else {
-                    s.scheduled_tasks.push(rust_task);
+                    s.scheduled_tasks.push(rust_task.clone());
                 }
                 let _ = s.save_scheduled_tasks();
 
@@ -279,9 +298,14 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                             run_on_boot_if_missed: scheduler.get_selected_task_run_on_boot(),
                         },
                         execution_count: scheduler.get_selected_task_execution_count(),
+                        active: scheduler.get_selected_task_active(),
+                        last_run: last_run,
                     };
                     scheduler.set_tasks(std::rc::Rc::new(VecModel::from(tasks)).into());
                 }
+
+                // Close the form
+                scheduler.set_selected_task_index(-1);
             }
         }
     });
@@ -314,6 +338,33 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                 tasks.remove(index as usize);
                 scheduler.set_tasks(std::rc::Rc::new(VecModel::from(tasks)).into());
                 scheduler.set_selected_task_index(-1);
+            }
+        }
+    });
+
+    scheduler_logic.on_toggle_task_active({
+        let state_clone = state.clone();
+        let window_weak = window_weak.clone();
+        move |index, active| {
+            if let Some(window) = window_weak.upgrade() {
+                if index < 0 { return; }
+
+                let scheduler = window.global::<SchedulerLogic>();
+                let mut tasks: Vec<super::ScheduledTask> = scheduler.get_tasks().iter().collect();
+
+                if (index as usize) < tasks.len() {
+                    // Update UI model
+                    tasks[index as usize].active = active;
+                    scheduler.set_tasks(std::rc::Rc::new(VecModel::from(tasks)).into());
+
+                    // Update Rust state
+                    let task_name = scheduler.get_tasks().row_data(index as usize).unwrap().task_name.to_string();
+                    let mut s = state_clone.lock().unwrap();
+                    if let Some(pos) = s.scheduled_tasks.iter().position(|t| t.task_name == task_name) {
+                        s.scheduled_tasks[pos].active = active;
+                        let _ = s.save_scheduled_tasks();
+                    }
+                }
             }
         }
     });

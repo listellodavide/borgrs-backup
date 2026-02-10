@@ -2,7 +2,7 @@ use crate::app_state::BorgAppState as RustAppState;
 use crate::app_state::RepoBookmark;
 use crate::commands;
 use crate::commands::{BackupProgress, RestoreProgress};
-use crate::{ArchiveContentLogic, ArchiveEntry, ArchiveFilesLogic, ArchiveContentEntry};
+use crate::{ArchiveContentLogic, ArchiveEntry, ArchiveFilesLogic};
 use slint::{ComponentHandle, Model, SharedString};
 use std::path::Path;
 use super::scheduler_bridge;
@@ -368,30 +368,33 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
         move |index| {
             if let Some(window) = window_weak.upgrade() {
                 let dashboard = window.global::<DashboardLogic>();
+
+                // Handle section header click (index -1)
+                if index == -1 {
+                    dashboard.set_active_repo_index(-1);
+                    dashboard.set_has_selected_repo(false);
+                    dashboard.set_is_scheduled_tasks_active(false);
+                    window.global::<AppState>().set_current_view("dashboard".into());
+                    return;
+                }
+
                 dashboard.set_active_repo_index(index);
                 dashboard.set_has_selected_repo(true);
                 dashboard.set_is_scheduled_tasks_active(false);
                 window.global::<AppState>().set_current_view("dashboard".into());
 
-                let (repo_path, bookmarks) = {
+                let (repo_path, bookmarks, password) = {
                     let s = state_clone.lock().unwrap();
                     let path = s.bookmarks.get(index as usize).map(|bm| bm.path.clone());
-                    (path, s.bookmarks.clone())
+                    let pwd = path.as_ref().and_then(|p| s.session_passwords.get(p).cloned());
+                    (path, s.bookmarks.clone(), pwd)
                 };
 
-                // Clear current archives while loading
-                let empty_model = std::rc::Rc::new(slint::VecModel::from(vec![]));
-                dashboard.set_archives(empty_model.into());
-                
                 if let Some(path) = repo_path {
-                    let repo_path_str = path.clone();
                     // Update pending archive state for this repo
-                    let (bookmark, password) = {
+                    let bookmark = {
                         let s = state_clone.lock().unwrap();
-                        let bm = s.get_archive_bookmark_for_repo(&path);
-                        let pwd = s.session_passwords.get(&path).cloned()
-                            .or_else(|| s.get_password(&path).ok());
-                        (bm, pwd)
+                        s.get_archive_bookmark_for_repo(&path)
                     };
                     
                     if let Some(bm) = bookmark {
@@ -402,20 +405,19 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                         dashboard.set_has_pending_archive(false);
                     }
 
-                    // Load archives
+                    // Load archives for the selected repository
                     let window_weak2 = window_weak.clone();
-                    dashboard.set_terminal_text(format!("Loading archives for {}...", repo_path_str).into());
-                    
+                    let repo_path_clone = path.clone();
                     tokio::spawn(async move {
                         match async {
                             let storage = borg_core::storage::StorageConfig::Local {
-                                path: std::path::PathBuf::from(&repo_path_str)
+                                path: std::path::PathBuf::from(&repo_path_clone)
                             };
                             let op = borg_core::storage::build_operator(storage)
                                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                             let repo = borg_core::repository::Repository::open(
                                 op,
-                                repo_path_str.clone(),
+                                repo_path_clone.clone(),
                                 password.as_deref()
                             ).await
                                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -434,15 +436,14 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                                                     name: archive.name.clone().into(),
                                                     date: archive.time.to_string().into(),
                                                     size: "".into(),
-                                                    hostname: "".into(),
-                                                    comment: "".into(),
-                                                    tags: "".into(),
+                                                    hostname: archive.hostname.clone().into(),
+                                                    comment: archive.comment.unwrap_or_default().into(),
+                                                    tags: archive.tags.unwrap_or_default().join(", ").into(),
                                                 }
                                             })
                                             .collect();
                                         let archives_model = std::rc::Rc::new(slint::VecModel::from(archive_entries));
                                         w.global::<DashboardLogic>().set_archives(archives_model.into());
-                                        w.global::<DashboardLogic>().set_terminal_text(format!("Archives loaded for {}", repo_path_str).into());
                                     }
                                 });
                             }
@@ -451,13 +452,7 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                                 let _ = slint::invoke_from_event_loop(move || {
                                     if let Some(w) = window_weak2.upgrade() {
                                         w.global::<DashboardLogic>()
-                                            .set_terminal_text(error_msg.clone().into());
-                                            
-                                        if error_msg.contains("Invalid passphrase") {
-                                                w.global::<AppState>().set_pending_auth_action(SharedString::from("load_archives"));
-                                                w.global::<AppState>().set_show_password_dialog(true);
-                                                w.global::<AppState>().set_password_dialog_message(format!("Authentication failed for {}. Please enter passphrase:", repo_path_str).into());
-                                        }
+                                            .set_terminal_text(error_msg.into());
                                     }
                                 });
                             }
@@ -497,164 +492,6 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
         }
     });
 
-    dashboard.on_archive_double_clicked({
-        let window_weak = window_weak.clone();
-        let state_clone = state.clone();
-        move |entry| {
-            if let Some(window) = window_weak.upgrade() {
-                let dashboard = window.global::<DashboardLogic>();
-                let active_index = dashboard.get_active_repo_index();
-                let archive_name = entry.name.to_string();
-
-                let (repo_path, repo_password) = {
-                    let s = state_clone.lock().unwrap();
-                    if let Some(bm) = s.bookmarks.get(active_index as usize) {
-                        let pwd = s.session_passwords.get(&bm.path).cloned();
-                        (bm.path.clone(), pwd)
-                    } else {
-                        return;
-                    }
-                };
-
-                let content_logic = window.global::<ArchiveContentLogic>();
-                content_logic.set_archive_name(entry.name);
-                content_logic.set_show_dialog(true);
-                // Clear previous list
-                content_logic.set_files(std::rc::Rc::new(slint::VecModel::default()).into());
-                content_logic.set_search_text("Loading...".into());
-
-                let window_weak2 = window_weak.clone();
-                let repo_path_clone = repo_path.clone();
-                let archive_name_clone = archive_name.clone();
-                
-                let state_clone = state_clone.clone();
-                tokio::spawn(async move {
-                    let res = crate::commands::list_archive_files(
-                        &repo_path_clone,
-                        repo_password.as_deref(),
-                        &archive_name_clone
-                    ).await;
-
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(w) = window_weak2.upgrade() {
-                            match res {
-                                Ok(files) => {
-                                    // Cache files
-                                    {
-                                        let mut s = state_clone.lock().unwrap();
-                                        s.archive_cache = Some((archive_name_clone.clone(), files.as_slice().iter().map(|f| crate::commands::FileEntry {
-                                            path: f.path.clone(),
-                                            size: f.size,
-                                            is_dir: f.is_dir,
-                                            mode: f.mode,
-                                            user: f.user.clone(),
-                                            group: f.group.clone(),
-                                            mtime: f.mtime
-                                        }).collect())); 
-                                        // Wait, cannot clone Vec<FileEntry> easily unless Clone derived? 
-                                        // I defined FileEntry in commands.rs without derive Clone. Let's fix that or manually clone.
-                                        // Manual map is fine.
-                                    }
-
-                                    let content_logic = w.global::<ArchiveContentLogic>();
-                                    content_logic.set_search_text("".into());
-                                    
-                                    // Initial render (all files)
-                                    let mut ui_files = Vec::new();
-                                    // Limit initial display to 1000 items to avoid freezing UI if massive archive
-                                    // Or implement virtualization. ListView handles virtualization well but model update can be slow.
-                                    // Let's take all for now.
-                                    for f in files {
-                                        let icon_path = if f.is_dir {
-                                            slint::Image::load_from_path(std::path::Path::new("assets/folder.svg")).unwrap_or_default()
-                                        } else {
-                                            slint::Image::load_from_path(std::path::Path::new("assets/file.svg")).unwrap_or_default()
-                                        };
-                                        
-                                        ui_files.push(ArchiveContentEntry {
-                                            path: f.path.into(),
-                                            size: crate::commands::human_bytes(f.size).into(),
-                                            item_type: if f.is_dir { "d".into() } else { "f".into() },
-                                            user: f.user.into(),
-                                            group: f.group.into(),
-                                            mtime: chrono::DateTime::from_timestamp(f.mtime, 0).unwrap_or_default().format("%Y-%m-%d %H:%M").to_string().into(),
-                                            icon: icon_path, // Need to load image
-                                            selected: false,
-                                        });
-                                    }
-                                    let model = std::rc::Rc::new(slint::VecModel::from(ui_files));
-                                    content_logic.set_files(model.into());
-                                }
-                                Err(e) => {
-                                    let msg = format!("Error loading archive: {}", e);
-                                    w.global::<DashboardLogic>().set_terminal_text(msg.clone().into());
-                                    // Show error in search bar
-                                    w.global::<ArchiveContentLogic>().set_search_text(msg.into());
-                                }
-                            }
-                        }
-                    });
-                });
-            }
-        }
-    });
-
-    // ArchiveContentLogic
-    let content_logic = window.global::<ArchiveContentLogic>();
-    
-    content_logic.on_close({
-        let window_weak = window_weak.clone();
-        move || {
-            if let Some(window) = window_weak.upgrade() {
-                window.global::<ArchiveContentLogic>().set_show_dialog(false);
-            }
-        }
-    });
-
-    content_logic.on_search_apply({
-        let window_weak = window_weak.clone();
-        let state_clone = state.clone();
-        move |term, regex| {
-            if let Some(window) = window_weak.upgrade() {
-                 let s = state_clone.lock().unwrap();
-                 if let Some((_, files)) = &s.archive_cache {
-                     let term_lower = term.to_lowercase();
-                     let mut ui_files = Vec::new();
-                     
-                     for f in files {
-                         let matches = if regex {
-                             // Simple regex or contains
-                             f.path.to_lowercase().contains(&term_lower) // Placeholder for real regex
-                         } else {
-                             f.path.to_lowercase().contains(&term_lower)
-                         };
-
-                         if matches {
-                            let icon_path = if f.is_dir {
-                                slint::Image::load_from_path(std::path::Path::new("assets/folder.svg")).unwrap_or_default()
-                            } else {
-                                slint::Image::load_from_path(std::path::Path::new("assets/file.svg")).unwrap_or_default()
-                            };
-
-                             ui_files.push(ArchiveContentEntry {
-                                path: f.path.clone().into(),
-                                size: crate::commands::human_bytes(f.size).into(),
-                                item_type: if f.is_dir { "d".into() } else { "f".into() },
-                                user: f.user.clone().into(),
-                                group: f.group.clone().into(),
-                                mtime: chrono::DateTime::from_timestamp(f.mtime, 0).unwrap_or_default().format("%Y-%m-%d %H:%M").to_string().into(),
-                                icon: icon_path,
-                                selected: false,
-                             });
-                         }
-                     }
-                     let model = std::rc::Rc::new(slint::VecModel::from(ui_files));
-                     window.global::<ArchiveContentLogic>().set_files(model.into());
-                 }
-            }
-        }
-    });
-    
     // New Archive Wizard Logic
     let new_archive = window.global::<NewArchiveWizardLogic>();
 
@@ -1169,6 +1006,7 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
         let window_weak = window_weak.clone();
         move |entry| {
             if let Some(window) = window_weak.upgrade() {
+                println!("Archive double clicked: {}", entry.name);
                 let files_logic = window.global::<ArchiveFilesLogic>();
                 files_logic.set_current_archive_name(entry.name.clone());
                 files_logic.invoke_request_files(entry.name, "".into(), false);

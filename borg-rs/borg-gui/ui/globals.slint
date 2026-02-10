@@ -136,6 +136,8 @@ export struct ScheduledTask {
     archive_name: string,
     schedule: BackupSchedule,
     execution_count: int, // New: how many times this task has been executed
+    active: bool,         // New: is the task active
+    last_run: string,     // New: timestamp of last run
 }
 
 export global SchedulerLogic {
@@ -153,6 +155,7 @@ export global SchedulerLogic {
     in-out property <int> selected_task_minute: 0;
     in-out property <bool> selected_task_run_on_boot: true;
     in-out property <int> selected_task_execution_count: 0;
+    in-out property <bool> selected_task_active: true;
 
 
     // For populating dropdowns
@@ -165,6 +168,7 @@ export global SchedulerLogic {
     callback new_task();
     callback save_task(); // No longer takes ScheduledTask, uses selected_task_* properties
     callback delete_task(int);
+    callback toggle_task_active(int, bool); // New callback
     callback on_repo_selected(int);  // When user selects a repository
     callback generate_task_name();   // Generate unique task name
     callback on_selected_task_index_changed(int); // New: when a task is selected from the list

@@ -1149,6 +1149,7 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
