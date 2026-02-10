@@ -6,10 +6,10 @@ use crate::app_state::BorgAppState;
 pub fn start_task_runner(app_state: Arc<Mutex<BorgAppState>>) {
     tokio::spawn(async move {
         loop {
-            let now = Local::now();
+            let _now = Local::now();
             let tasks_to_run = {
                 let state = app_state.lock().unwrap();
-                state.scheduled_tasks.iter().filter(|task| {
+                state.scheduled_tasks.iter().filter(|_task| {
                     // TODO: Implement scheduling logic
                     false
                 }).cloned().collect::<Vec<_>>()
