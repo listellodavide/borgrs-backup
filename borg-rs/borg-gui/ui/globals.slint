@@ -130,34 +130,39 @@ export struct ScheduledTask {
     repo_name: string,
     archive_name: string,
     schedule: BackupSchedule,
+    execution_count: int, // New: how many times this task has been executed
 }
 
 export global SchedulerLogic {
     in-out property <[ScheduledTask]> tasks;
     in-out property <int> selected_task_index: -1;
 
-    // For task creation
+    // For task creation/editing form
+    in-out property <string> selected_task_name: "";
+    in-out property <string> selected_task_repo_name: "";
+    in-out property <string> selected_task_archive_name: "";
+    in-out property <int> selected_task_schedule_type_index: 0; // 0=Daily, 1=Weekly, 2=Monthly, 3=Manual
+    in-out property <int> selected_task_weekday: 0;
+    in-out property <int> selected_task_day_of_month: 1;
+    in-out property <int> selected_task_hour: 3;
+    in-out property <int> selected_task_minute: 0;
+    in-out property <bool> selected_task_run_on_boot: true;
+    in-out property <int> selected_task_execution_count: 0;
+
+
+    // For populating dropdowns
     in property <[RepoItem]> available_repositories;
     in property <[string]> available_repo_names;  // Helper array of repo names
-    in-out property <int> selected_repo_index: -1;
 
     in property <[ArchiveEntry]> available_archives; // For selected repo
     in property <[string]> available_archive_names;  // Helper array of archive names
-    in-out property <int> selected_archive_index: -1;
-
-    // Task being edited/created
-    in-out property <int> schedule_type_index: 0; // 0=Daily, 1=Weekly, 2=Monthly, 3=Manual
-    in-out property <int> schedule_weekday: 0;
-    in-out property <int> schedule_day_of_month: 1;
-    in-out property <int> schedule_hour: 3;
-    in-out property <int> schedule_minute: 0;
-    in-out property <bool> schedule_run_on_boot: true;
 
     callback new_task();
-    callback save_task(ScheduledTask);
+    callback save_task(); // No longer takes ScheduledTask, uses selected_task_* properties
     callback delete_task(int);
     callback on_repo_selected(int);  // When user selects a repository
     callback generate_task_name();   // Generate unique task name
+    callback on_selected_task_index_changed(int); // New: when a task is selected from the list
 }
 
 export global RestoreLogic {

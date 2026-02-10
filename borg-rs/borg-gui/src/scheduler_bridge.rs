@@ -63,10 +63,41 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                 hour: t.schedule.hour,
                 minute: t.schedule.minute,
                 run_on_boot_if_missed: t.schedule.run_on_boot_if_missed,
-            }
+            },
+            execution_count: t.execution_count,
         }
     }).collect();
     scheduler_logic.set_tasks(std::rc::Rc::new(VecModel::from(slint_tasks)).into());
+
+    scheduler_logic.on_on_selected_task_index_changed({
+        let window_weak = window_weak.clone();
+        move |index| {
+            if let Some(window) = window_weak.upgrade() {
+                let scheduler = window.global::<SchedulerLogic>();
+                scheduler.set_selected_task_index(index);
+                if index >= 0 {
+                    let tasks: Vec<super::ScheduledTask> = scheduler.get_tasks().iter().collect();
+                    if let Some(task) = tasks.get(index as usize) {
+                        scheduler.set_selected_task_name(task.task_name.clone());
+                        scheduler.set_selected_task_repo_name(task.repo_name.clone());
+                        scheduler.set_selected_task_archive_name(task.archive_name.clone());
+                        scheduler.set_selected_task_schedule_type_index(match task.schedule.schedule_type {
+                            super::ScheduleType::Daily => 0,
+                            super::ScheduleType::Weekly => 1,
+                            super::ScheduleType::Monthly => 2,
+                            super::ScheduleType::Manual => 3,
+                        });
+                        scheduler.set_selected_task_weekday(task.schedule.weekday);
+                        scheduler.set_selected_task_day_of_month(task.schedule.day_of_month);
+                        scheduler.set_selected_task_hour(task.schedule.hour);
+                        scheduler.set_selected_task_minute(task.schedule.minute);
+                        scheduler.set_selected_task_run_on_boot(task.schedule.run_on_boot_if_missed);
+                        scheduler.set_selected_task_execution_count(task.execution_count);
+                    }
+                }
+            }
+        }
+    });
 
     // Handle repository selection change
     scheduler_logic.on_on_repo_selected({
@@ -113,30 +144,14 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                             Ok(archive_list) => {
                                 let _ = slint::invoke_from_event_loop(move || {
                                     if let Some(w) = window_weak2.upgrade() {
-                                        // Convert archive names to ArchiveEntry objects
-                                        let archive_entries: Vec<super::ArchiveEntry> = archive_list
+                                        let archive_names: Vec<slint::SharedString> = archive_list
                                             .into_iter()
                                             .map(|archive| {
-                                                super::ArchiveEntry {
-                                                    name: archive.name.clone().into(),
-                                                    date: archive.time.to_string().into(),
-                                                    size: "".into(), // Not available in manifest
-                                                    hostname: "".into(), // Not available in manifest
-                                                    comment: "".into(), // Not available in manifest
-                                                    tags: "".into(), // Not available in manifest
-                                                }
+                                                archive.name.clone().into()
                                             })
                                             .collect();
 
-                                        let archive_names: Vec<slint::SharedString> = archive_entries
-                                            .iter()
-                                            .map(|a| slint::SharedString::from(a.name.as_str()))
-                                            .collect();
-
                                         let scheduler = w.global::<SchedulerLogic>();
-                                        let model = std::rc::Rc::new(slint::VecModel::from(archive_entries));
-                                        scheduler.set_available_archives(model.into());
-
                                         let names_model = std::rc::Rc::new(slint::VecModel::from(archive_names));
                                         scheduler.set_available_archive_names(names_model.into());
                                     }
@@ -164,42 +179,27 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
         move || {
             if let Some(window) = window_weak.upgrade() {
                 let scheduler = window.global::<SchedulerLogic>();
-                let index = scheduler.get_selected_task_index();
-                if index >= 0 {
-                    let mut tasks: Vec<super::ScheduledTask> = scheduler.get_tasks().iter().collect();
-                    if (index as usize) < tasks.len() {
-                        let task = &tasks[index as usize];
-                        let new_name = generate_task_name(
-                            &task.repo_name,
-                            &task.archive_name,
-                            scheduler.get_schedule_type_index(),
-                            scheduler.get_schedule_hour(),
-                            scheduler.get_schedule_minute(),
-                        );
-                        tasks[index as usize].task_name = new_name.into();
-                        scheduler.set_tasks(std::rc::Rc::new(VecModel::from(tasks)).into());
-                    }
-                }
+                let new_name = generate_task_name(
+                    &scheduler.get_selected_task_repo_name(),
+                    &scheduler.get_selected_task_archive_name(),
+                    scheduler.get_selected_task_schedule_type_index(),
+                    scheduler.get_selected_task_hour(),
+                    scheduler.get_selected_task_minute(),
+                );
+                scheduler.set_selected_task_name(new_name.into());
             }
         }
     });
 
     scheduler_logic.on_new_task({
         let window_weak = window_weak.clone();
-        let state_clone = state.clone();
         move || {
             if let Some(window) = window_weak.upgrade() {
+                println!("Creating new scheduled task");
                 let scheduler = window.global::<SchedulerLogic>();
-                let mut tasks: Vec<super::ScheduledTask> = scheduler.get_tasks().iter().collect();
-
-                let task_name = if !tasks.is_empty() {
-                    format!("new_task_{}", tasks.len())
-                } else {
-                    "new_task_1".to_string()
-                };
-
+                let new_task_name = generate_task_name("new", "task", 0, 3, 0);
                 let new_task = super::ScheduledTask {
-                    task_name: task_name.clone().into(),
+                    task_name: new_task_name.into(),
                     repo_name: "".into(),
                     archive_name: "".into(),
                     schedule: super::BackupSchedule {
@@ -209,36 +209,14 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                         hour: 3,
                         minute: 0,
                         run_on_boot_if_missed: true,
-                    }
+                    },
+                    execution_count: 0,
                 };
-                tasks.push(new_task.clone());
+                let mut tasks: Vec<super::ScheduledTask> = scheduler.get_tasks().iter().collect();
+                tasks.push(new_task);
                 scheduler.set_tasks(std::rc::Rc::new(VecModel::from(tasks)).into());
-                scheduler.set_selected_task_index(scheduler.get_tasks().row_count() as i32 - 1);
-
-                // Reset form fields
-                scheduler.set_schedule_type_index(0);
-                scheduler.set_schedule_weekday(0);
-                scheduler.set_schedule_day_of_month(1);
-                scheduler.set_schedule_hour(3);
-                scheduler.set_schedule_minute(0);
-                scheduler.set_schedule_run_on_boot(true);
-
-                // Persist new task
-                let mut s = state_clone.lock().unwrap();
-                s.scheduled_tasks.push(ScheduledTask {
-                    task_name,
-                    repo_name: "".to_string(),
-                    archive_name: "".to_string(),
-                    schedule: BackupSchedule {
-                        schedule_type: ScheduleType::Daily,
-                        weekday: 0,
-                        day_of_month: 1,
-                        hour: 3,
-                        minute: 0,
-                        run_on_boot_if_missed: true,
-                    }
-                });
-                let _ = s.save_scheduled_tasks();
+                let new_index = scheduler.get_tasks().row_count() as i32 - 1;
+                scheduler.invoke_on_selected_task_index_changed(new_index);
             }
         }
     });
@@ -246,35 +224,64 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
     scheduler_logic.on_save_task({
         let state_clone = state.clone();
         let window_weak = window_weak.clone();
-        move |task| {
-            if let Some(_window) = window_weak.upgrade() {
+        move || {
+            if let Some(window) = window_weak.upgrade() {
+                let scheduler = window.global::<SchedulerLogic>();
                 let rust_task = ScheduledTask {
-                    task_name: task.task_name.to_string(),
-                    repo_name: task.repo_name.to_string(),
-                    archive_name: task.archive_name.to_string(),
+                    task_name: scheduler.get_selected_task_name().to_string(),
+                    repo_name: scheduler.get_selected_task_repo_name().to_string(),
+                    archive_name: scheduler.get_selected_task_archive_name().to_string(),
                     schedule: BackupSchedule {
-                        schedule_type: match task.schedule.schedule_type {
-                            super::ScheduleType::Daily => ScheduleType::Daily,
-                            super::ScheduleType::Weekly => ScheduleType::Weekly,
-                            super::ScheduleType::Monthly => ScheduleType::Monthly,
-                            super::ScheduleType::Manual => ScheduleType::Manual,
+                        schedule_type: match scheduler.get_selected_task_schedule_type_index() {
+                            0 => ScheduleType::Daily,
+                            1 => ScheduleType::Weekly,
+                            2 => ScheduleType::Monthly,
+                            _ => ScheduleType::Manual,
                         },
-                        weekday: task.schedule.weekday,
-                        day_of_month: task.schedule.day_of_month,
-                        hour: task.schedule.hour,
-                        minute: task.schedule.minute,
-                        run_on_boot_if_missed: task.schedule.run_on_boot_if_missed,
-                    }
+                        weekday: scheduler.get_selected_task_weekday(),
+                        day_of_month: scheduler.get_selected_task_day_of_month(),
+                        hour: scheduler.get_selected_task_hour(),
+                        minute: scheduler.get_selected_task_minute(),
+                        run_on_boot_if_missed: scheduler.get_selected_task_run_on_boot(),
+                    },
+                    execution_count: scheduler.get_selected_task_execution_count(),
                 };
 
+                println!("Saving task: {}", rust_task.task_name);
+
                 let mut s = state_clone.lock().unwrap();
-                // Find and update or add task by task_name
                 if let Some(pos) = s.scheduled_tasks.iter().position(|t| t.task_name == rust_task.task_name) {
                     s.scheduled_tasks[pos] = rust_task;
                 } else {
                     s.scheduled_tasks.push(rust_task);
                 }
                 let _ = s.save_scheduled_tasks();
+
+                // Update the UI model
+                let mut tasks: Vec<super::ScheduledTask> = scheduler.get_tasks().iter().collect();
+                let index = scheduler.get_selected_task_index() as usize;
+                if index < tasks.len() {
+                    tasks[index] = super::ScheduledTask {
+                        task_name: scheduler.get_selected_task_name(),
+                        repo_name: scheduler.get_selected_task_repo_name(),
+                        archive_name: scheduler.get_selected_task_archive_name(),
+                        schedule: super::BackupSchedule {
+                            schedule_type: match scheduler.get_selected_task_schedule_type_index() {
+                                0 => super::ScheduleType::Daily,
+                                1 => super::ScheduleType::Weekly,
+                                2 => super::ScheduleType::Monthly,
+                                _ => super::ScheduleType::Manual,
+                            },
+                            weekday: scheduler.get_selected_task_weekday(),
+                            day_of_month: scheduler.get_selected_task_day_of_month(),
+                            hour: scheduler.get_selected_task_hour(),
+                            minute: scheduler.get_selected_task_minute(),
+                            run_on_boot_if_missed: scheduler.get_selected_task_run_on_boot(),
+                        },
+                        execution_count: scheduler.get_selected_task_execution_count(),
+                    };
+                    scheduler.set_tasks(std::rc::Rc::new(VecModel::from(tasks)).into());
+                }
             }
         }
     });
@@ -286,7 +293,6 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
             if let Some(window) = window_weak.upgrade() {
                 if index < 0 { return; }
 
-                // Get task name to delete
                 let task_name = {
                     let scheduler = window.global::<SchedulerLogic>();
                     let tasks: Vec<super::ScheduledTask> = scheduler.get_tasks().iter().collect();
@@ -296,6 +302,8 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                         return;
                     }
                 };
+
+                println!("Deleting task: {}", task_name);
 
                 let mut s = state_clone.lock().unwrap();
                 s.scheduled_tasks.retain(|t| t.task_name != task_name);

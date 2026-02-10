@@ -8,7 +8,7 @@ pub mod task_runner;
 
 use std::sync::{Arc, Mutex};
 use app_state::BorgAppState as RustAppState;
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model}; // Added Model here
 use borg_core::scheduler::{Scheduler, ScheduledTask as CoreScheduledTask, BackupSchedule as CoreBackupSchedule, ScheduleType as CoreScheduleType, SchedulerReporter};
 
 struct GuiSchedulerReporter {
@@ -21,14 +21,16 @@ impl SchedulerReporter for GuiSchedulerReporter {
         let _ = slint::invoke_from_event_loop({
             let window_weak = self.window_weak.clone();
             let repo_path = task.repo_path.clone();
+            let task_name = task.archive_name.clone();
             move || {
                 if let Some(window) = window_weak.upgrade() {
+                    println!("Scheduled task '{}' started for repo: {}", task_name, repo_path);
                     window.global::<AppState>().set_is_processing(true);
                     window.global::<AppState>().set_progress(0.0);
                     let dash = window.global::<DashboardLogic>();
                     dash.set_is_scheduled_backup_running(true);
                     dash.set_scheduled_backup_repo_path(repo_path.clone().into());
-                    dash.set_terminal_text(format!("Scheduled task started for repo: {}", repo_path).into());
+                    dash.set_terminal_text(format!("Scheduled task '{}' started for repo: {}", task_name, repo_path).into());
                 }
             }
         });
@@ -50,13 +52,15 @@ impl SchedulerReporter for GuiSchedulerReporter {
         let _ = slint::invoke_from_event_loop({
             let window_weak = self.window_weak.clone();
             let repo_path = task.repo_path.clone();
+            let task_name = task.archive_name.clone();
             move || {
                 if let Some(window) = window_weak.upgrade() {
+                    println!("Scheduled task '{}' completed for {}: {}", task_name, repo_path, summary);
                     window.global::<AppState>().set_is_processing(false);
                     window.global::<AppState>().set_progress(1.0);
                     let dash = window.global::<DashboardLogic>();
                     dash.set_is_scheduled_backup_running(false);
-                    dash.set_terminal_text(format!("Scheduled task completed for {}: {}", repo_path, summary).into());
+                    dash.set_terminal_text(format!("Scheduled task '{}' completed for {}: {}", task_name, repo_path, summary).into());
                 }
             }
         });
@@ -66,15 +70,17 @@ impl SchedulerReporter for GuiSchedulerReporter {
         let _ = slint::invoke_from_event_loop({
             let window_weak = self.window_weak.clone();
             let repo_path = task.repo_path.clone();
+            let task_name = task.archive_name.clone();
             move || {
                 if let Some(window) = window_weak.upgrade() {
+                    println!("Scheduled task '{}' failed for {}: {}", task_name, repo_path, error);
                     window.global::<AppState>().set_is_processing(false);
                     let dash = window.global::<DashboardLogic>();
                     dash.set_is_scheduled_backup_running(false);
                     if error.contains("Failed to acquire lock") {
-                        dash.set_terminal_text(format!("Task for {} is queued, waiting for lock.", repo_path).into());
+                        dash.set_terminal_text(format!("Task '{}' for {} is queued, waiting for lock.", task_name, repo_path).into());
                     } else {
-                        dash.set_terminal_text(format!("Scheduled task failed for {}: {}", repo_path, error).into());
+                        dash.set_terminal_text(format!("Scheduled task '{}' failed for {}: {}", task_name, repo_path, error).into());
                     }
                 }
             }
@@ -145,13 +151,72 @@ async fn main() -> anyhow::Result<()> {
             repo_type: b.repo_type.into(),
         }).collect();
 
-        let archives = vec![];
-        
         let repos_model = std::rc::Rc::new(slint::VecModel::from(repos));
         dashboard.set_repositories(repos_model.into());
         
-        let archives_model = std::rc::Rc::new(slint::VecModel::from(archives));
-        dashboard.set_archives(archives_model.into());
+        // Load archives for the first repository if it exists
+        if let Some(first_repo) = dashboard.get_repositories().iter().next() {
+            let repo_path = first_repo.path.to_string();
+            let password = {
+                let state = rust_app_state.lock().unwrap();
+                state.session_passwords.get(&repo_path).cloned()
+            };
+
+            let window_weak = main_window.as_weak();
+            tokio::spawn(async move {
+                match async {
+                    let storage = borg_core::storage::StorageConfig::Local {
+                        path: std::path::PathBuf::from(&repo_path)
+                    };
+                    let op = borg_core::storage::build_operator(storage)
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                    let repo = borg_core::repository::Repository::open(
+                        op,
+                        repo_path.clone(),
+                        password.as_deref()
+                    ).await
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                    let manifest = repo.load_manifest()
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                    Ok::<_, anyhow::Error>(manifest.archives)
+                }.await {
+                    Ok(archive_list) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = window_weak.upgrade() {
+                                let archive_entries: Vec<ArchiveEntry> = archive_list
+                                    .into_iter()
+                                    .map(|archive| {
+                                        ArchiveEntry {
+                                            name: archive.name.clone().into(),
+                                            date: archive.time.to_string().into(),
+                                            size: "".into(),
+                                            hostname: "".into(),
+                                            comment: "".into(),
+                                            tags: "".into(),
+                                        }
+                                    })
+                                    .collect();
+                                let archives_model = std::rc::Rc::new(slint::VecModel::from(archive_entries));
+                                w.global::<DashboardLogic>().set_archives(archives_model.into());
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let error_msg = format!("Failed to load archives: {}", e);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = window_weak.upgrade() {
+                                w.global::<DashboardLogic>()
+                                    .set_terminal_text(error_msg.into());
+                            }
+                        });
+                    }
+                }
+            });
+        } else {
+            let archives_model = std::rc::Rc::new(slint::VecModel::from(vec![]));
+            dashboard.set_archives(archives_model.into());
+        }
         
         dashboard.set_terminal_text("Welcome to Borg Backup Disaster Recovery client is ready!".into());
         dashboard.set_status_text(format!("All systems OK, {}", borg_core::archive::current_time_hh_mm_dd_mm_yyyy()).into());
@@ -183,6 +248,7 @@ async fn main() -> anyhow::Result<()> {
                     run_on_boot_if_missed: task.schedule.run_on_boot_if_missed,
                 },
                 last_run: None,
+                execution_count: task.execution_count as u32,
             }
         }).collect()
     };

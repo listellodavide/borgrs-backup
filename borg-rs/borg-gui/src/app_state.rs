@@ -26,7 +26,7 @@ pub struct ArchiveBookmark {
     pub paths: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ScheduleType {
     Daily,
     Weekly,
@@ -34,7 +34,7 @@ pub enum ScheduleType {
     Manual,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BackupSchedule {
     pub schedule_type: ScheduleType,
     pub weekday: i32, // 0 = Mon … 6 = Sun
@@ -44,12 +44,13 @@ pub struct BackupSchedule {
     pub run_on_boot_if_missed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScheduledTask {
     pub task_name: String, // Auto-generated: repo_archive_frequency_hh_mm
     pub repo_name: String,
     pub archive_name: String,
     pub schedule: BackupSchedule,
+    pub execution_count: i32,
 }
 
 #[derive(Debug, Default)]
@@ -197,5 +198,68 @@ impl BorgAppState {
         let entry = Entry::new(KEYRING_SERVICE, repo_path)?;
         let password = entry.get_password()?;
         Ok(password)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use std::fs;
+
+    fn save_scheduled_tasks_to_path(tasks: &[ScheduledTask], path: &std::path::Path) -> anyhow::Result<()> {
+        let content = serde_json::to_string_pretty(tasks)?;
+        fs::write(path, content)?;
+        Ok(())
+    }
+
+    fn load_scheduled_tasks_from_path(path: &std::path::Path) -> Vec<ScheduledTask> {
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(path) {
+                if let Ok(tasks) = serde_json::from_str(&content) {
+                    return tasks;
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    #[test]
+    fn test_scheduler_state_persistence() {
+        let dir = tempdir().unwrap();
+        let scheduled_tasks_path = dir.path().join("scheduled_task.json");
+
+        let tasks = vec![
+            ScheduledTask {
+                task_name: "test_task_1".to_string(),
+                repo_name: "repo1".to_string(),
+                archive_name: "archive1".to_string(),
+                schedule: BackupSchedule {
+                    schedule_type: ScheduleType::Daily,
+                    weekday: 0,
+                    day_of_month: 0,
+                    hour: 1,
+                    minute: 0,
+                    run_on_boot_if_missed: true,
+                },
+                execution_count: 0,
+            }
+        ];
+
+        let save_result = save_scheduled_tasks_to_path(&tasks, &scheduled_tasks_path);
+        assert!(save_result.is_ok());
+
+        let loaded_tasks = load_scheduled_tasks_from_path(&scheduled_tasks_path);
+
+        assert_eq!(loaded_tasks.len(), 1);
+        assert_eq!(loaded_tasks[0], tasks[0]);
+
+        // Test deletion
+        let updated_tasks = vec![];
+        let save_result = save_scheduled_tasks_to_path(&updated_tasks, &scheduled_tasks_path);
+        assert!(save_result.is_ok());
+
+        let final_tasks = load_scheduled_tasks_from_path(&scheduled_tasks_path);
+        assert!(final_tasks.is_empty());
     }
 }
