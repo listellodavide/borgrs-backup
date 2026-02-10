@@ -1,5 +1,5 @@
 import { StandardListView } from "std-widgets.slint";
-import { ArchiveFilesDialog } from "./archive_files_dialog.slint";
+
 
 // Shared data structures used across multiple UI components
 export struct RepoItem {
@@ -21,6 +21,11 @@ export struct ArchiveContentEntry {
     path: string,
     size: string,
     item_type: string,
+    user: string,
+    group: string,
+    mtime: string,
+    icon: image,
+    selected: bool,
 }
 
 // Global state for the entire application, like current view

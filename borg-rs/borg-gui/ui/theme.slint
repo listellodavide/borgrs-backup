@@ -13,6 +13,7 @@ export global Theme {
     out property <color> primary_dim: #94e2d5; // Teal
     out property <color> accent: #f5c2e7;   // Pink (for high-contrast alerts)
     out property <color> border_color: #313244;
+    out property <color> green: #a6e3a1; // Explicit green for consistency
 
     // Backwards-compat aliases for existing UI code
     out property <color> background: base;        // map old background -> base
@@ -29,23 +30,25 @@ export global Theme {
 // Cyberpunk-style bordered text button
 export component CyberButton inherits Rectangle {
     in-out property <string> text;
+    in property <bool> enabled: true;
     callback clicked;
 
     // Interaction state
-    out property <bool> hovered: touch.has-hover;
-    out property <bool> pressed: touch.pressed;
+    out property <bool> hovered: touch.has-hover && root.enabled;
+    out property <bool> pressed: touch.pressed && root.enabled;
 
     height: 40px;
     min-width: 120px;
     border-width: 1px;
-    border-color: Theme.primary;
-    background: pressed ? Theme.primary : (hovered ? Theme.primary_dim : transparent);
+    border-color: enabled ? (pressed ? Theme.primary : Theme.primary) : Theme.subtext;
+    background: enabled ? (pressed ? Theme.primary : (hovered ? Theme.primary_dim : transparent)) : transparent;
+    opacity: enabled ? 1.0 : 0.5;
     clip: true;
 
     // Label
     Text {
         text: root.text;
-        color: root.pressed ? Theme.crust : (root.border-color != Theme.primary ? root.border-color : Theme.primary);
+        color: root.enabled ? (root.pressed ? Theme.crust : Theme.text) : Theme.subtext;
         font-weight: 700;
         letter-spacing: 1px;
         horizontal-alignment: center;
@@ -59,9 +62,11 @@ export component CyberButton inherits Rectangle {
         width: 8px;
         height: 8px;
         background: root.border-color;
+        visible: root.enabled;
     }
 
     touch := TouchArea {
-        clicked => { root.clicked(); }
+        clicked => { if (root.enabled) { root.clicked(); } }
+        mouse-cursor: root.enabled ? pointer : default;
     }
 }

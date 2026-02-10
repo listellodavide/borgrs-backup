@@ -1,87 +1,207 @@
-import { Button, CheckBox, LineEdit, ListView, ScrollView } from "std-widgets.slint";
-import { Theme } from "theme.slint";
+import { Button, CheckBox, LineEdit, ListView, ScrollView, StandardListView } from "std-widgets.slint";
+import { Theme, CyberButton } from "theme.slint";
+import { ArchiveContentEntry, ArchiveContentLogic, AppState } from "globals.slint";
 
 export component ArchiveFilesDialog inherits Dialog {
-    title: "Archive Contents";
-    width: 900px;
+    title: "Archive Content Browser";
+    width: 1000px;
     height: 700px;
+    background: Theme.background;
 
-    callback request-files(string, string, bool);
     callback close-requested();
-    in-out property <[string]> file-list;
-    in-out property <bool> use-regex: false;
-    in-out property <string> search-term: "";
+    callback restore-selected-requested();
 
-    // Custom background and styling for the dialog
     Rectangle {
-        background: #004282; // Dark cerulean background
+        background: Theme.background;
+        border-color: Theme.border;
+        border-width: 1px;
 
         VerticalLayout {
-            spacing: 15px;
-            padding: 20px;
-
-            // Title/Header
-            Text {
-                text: "Archive Contents";
-                font-size: 18px;
-                font-weight: 700;
-                color: Theme.primary;
-            }
-
-            // Search controls
-            HorizontalLayout {
-                spacing: 10px;
-                alignment: space-between;
-
-                LineEdit {
-                    placeholder-text: "Search files (use .* for all files with regex enabled)...";
-                    text <=> root.search-term;
-                }
-
-                CheckBox {
-                    text: "Regex";
-                    checked <=> root.use-regex;
-                }
-            }
-
-            // File list with scroll view
+            // --- Header: Archive Info ---
             Rectangle {
-                background: Theme.mantle;
-                border-color: Theme.primary;
-                border-width: 1px;
-                border-radius: 4px;
+                height: 80px;
+                background: Theme.surface;
+                
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+                
+                HorizontalLayout {
+                    padding: 20px;
+                    spacing: 20px;
+                    alignment: start;
+                    
+                    Image {
+                        source: @image-url("../assets/package.svg"); // Fallback to package/box icon or similar
+                        width: 40px;
+                        height: 40px;
+                        colorize: Theme.primary;
+                    }
 
-                ScrollView {
-                    ListView {
-                        for file in root.file-list : Rectangle {
-                            height: 24px;
-                            background: touch.has-hover ? Theme.border_color : transparent;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 5px;
+                        Text {
+                            text: ArchiveContentLogic.archive_name;
+                            font-size: 18px;
+                            font-weight: 700;
+                            color: Theme.text;
+                        }
+                        HorizontalLayout {
+                            spacing: 15px;
+                            Text { text: "Size: 1.2 GB"; color: Theme.text-muted; font-size: 12px; } // Placeholder or need to inject
+                            Text { text: "Date: 2023-10-25 14:30"; color: Theme.text-muted; font-size: 12px; }
+                        }
+                    }
 
-                            HorizontalLayout {
-                                padding-left: 10px;
-                                Text {
-                                    text: file;
-                                    color: Theme.text;
-                                    vertical-alignment: center;
-                                    font-size: 12px;
+                    Rectangle {} // Spacer
+
+                    // Actions
+                    CyberButton {
+                        text: "RESTORE SELECTED";
+                        enabled: true; // Logic to check if selections > 0
+                        clicked => { root.restore-selected-requested() }
+                    }
+                }
+            }
+
+            // --- Toolbar: Search & Filter ---
+            Rectangle {
+                height: 50px;
+                HorizontalLayout {
+                    padding-left: 20px; padding-right: 20px;
+                    spacing: 15px;
+                    alignment: center;
+
+                    Text { text: "Search:"; vertical-alignment: center; color: Theme.text; }
+                    
+                    LineEdit {
+                        width: 300px;
+                        placeholder-text: "Filter files...";
+                        text <=> ArchiveContentLogic.search_text;
+                        accepted => { ArchiveContentLogic.search_apply(self.text, ArchiveContentLogic.regex_enabled) }
+                    }
+
+                    CheckBox {
+                        text: "Regex";
+                        checked <=> ArchiveContentLogic.regex_enabled;
+                        toggled => { ArchiveContentLogic.search_apply(ArchiveContentLogic.search_text, self.checked) }
+                    }
+                    
+                    Rectangle {} // Spacer
+                }
+            }
+
+            // --- File List Table Header ---
+            Rectangle {
+                height: 30px;
+                background: Theme.surface.darker(0.2);
+                HorizontalLayout {
+                    padding-left: 10px; padding-right: 10px; spacing: 0px;
+                    
+                    // Checkbox column
+                    Rectangle { width: 40px; } 
+
+                    // Name
+                    Text { text: "Name"; width: 400px; color: Theme.text-muted; font-weight: 700; font-size: 12px; vertical-alignment: center; }
+                    
+                    // Size
+                    Text { text: "Size"; width: 100px; color: Theme.text-muted; font-weight: 700; font-size: 12px; vertical-alignment: center; }
+
+                    // Mode
+                    Text { text: "Mode"; width: 80px; color: Theme.text-muted; font-weight: 700; font-size: 12px; vertical-alignment: center; }
+
+                    // User
+                    Text { text: "Owner"; width: 120px; color: Theme.text-muted; font-weight: 700; font-size: 12px; vertical-alignment: center; }
+
+                    // Modified
+                    Text { text: "Modified"; width: 150px; color: Theme.text-muted; font-weight: 700; font-size: 12px; vertical-alignment: center; }
+                }
+            }
+
+            // --- File List Content ---
+            Rectangle {
+                clip: true;
+                ListView {
+                    for file in ArchiveContentLogic.files : Rectangle {
+                        height: 30px;
+                        background: touch.has-hover ? Theme.surface : (file.selected ? Theme.primary.with-alpha(0.1) : transparent);
+                        
+                        touch := TouchArea {
+                            clicked => {
+                                file.selected = !file.selected;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 10px; padding-right: 10px; spacing: 0px;
+
+                            // Checkbox
+                            Rectangle {
+                                width: 40px;
+                                CheckBox {
+                                    checked: file.selected;
+                                    toggled => { file.selected = self.checked; }
                                 }
                             }
 
-                            touch := TouchArea {}
+                            // Name with Icon
+                            HorizontalLayout {
+                                width: 400px;
+                                spacing: 5px;
+                                alignment: start;
+                                Image {
+                                    source: file.icon; // Use file.icon from struct
+                                    width: 16px;
+                                    height: 16px;
+                                    vertical-alignment: center;
+                                    colorize: file.item_type == "d" ? #FFD700 : Theme.text; // Yellow for dirs
+                                }
+                                Text {
+                                    text: file.path;
+                                    color: file.item_type == "d" ? Theme.primary : Theme.text;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+
+                            // Size
+                            Text { text: file.size; width: 100px; color: Theme.text-muted; vertical-alignment: center; font-family: "JetBrains Mono"; font-size: 12px; }
+
+                            // Mode
+                            Text { text: file.item_type; width: 80px; color: Theme.text-muted; vertical-alignment: center; font-family: "JetBrains Mono"; font-size: 12px; }
+
+                            // Owner
+                            Text { text: file.user + ":" + file.group; width: 120px; color: Theme.text-muted; vertical-alignment: center; font-size: 12px; overflow: elide; }
+
+                            // Modified
+                            Text { text: file.mtime; width: 150px; color: Theme.text-muted; vertical-alignment: center; font-size: 12px; }
                         }
                     }
                 }
             }
 
-            // Close button
-            HorizontalLayout {
-                alignment: end;
-                spacing: 10px;
+            // --- Footer ---
+            Rectangle {
+                height: 50px;
+                background: Theme.surface;
+                
+                Rectangle {
+                    y: 0;
+                    height: 1px;
+                    background: Theme.border;
+                }
 
-                Button {
-                    text: "Close";
-                    clicked => {
-                        root.close-requested();
+                HorizontalLayout {
+                    padding: 10px;
+                    alignment: end;
+                    spacing: 10px;
+
+                    Button {
+                        text: "Close";
+                        clicked => { root.close-requested() }
                     }
                 }
             }

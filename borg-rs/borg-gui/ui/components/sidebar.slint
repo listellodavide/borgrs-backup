@@ -31,30 +31,28 @@ component RepoSidebarItem inherits Rectangle {
     }
 }
 
-component ScheduledTasksSidebarItem inherits Rectangle {
-    in property <bool> active;
+component SectionHeader inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
     callback clicked <=> touch.clicked;
 
     height: 40px;
-    background: active ? Theme.surface : transparent;
-    border-radius: 4px;
-
     touch := TouchArea {}
 
     HorizontalLayout {
         padding-left: 15px;
         spacing: 12px;
         Image {
-            source: @image-url("../../assets/calendar-clock.svg");
+            source: root.icon;
             width: 16px;
             height: 16px;
-            colorize: active ? Theme.primary : Theme.text-muted;
+            colorize: Theme.green;
         }
         Text {
-            text: "Scheduled Tasks";
-            color: active ? Theme.text : Theme.text-muted;
+            text: root.text;
+            color: Theme.green;
             vertical-alignment: center;
-            font-weight: active ? 700 : 400;
+            font-weight: 700;
         }
     }
 }
@@ -74,22 +72,39 @@ export component Sidebar inherits Rectangle {
         padding: 15px;
         spacing: 10px;
         Text {
-            text: "REPOSITORIES";
-            font-size: 12px;
-            color: Theme.text-muted;
+            text: "Backup and Recovery Manager";
+            font-size: 14px;
+            color: Theme.text;
             font-weight: 800;
         }
         Rectangle { height: 10px; }
-        for repo[i] in DashboardLogic.repositories: RepoSidebarItem {
-            text: repo.name;
-            active: DashboardLogic.active_repo_index == i && DashboardLogic.has_selected_repo && !DashboardLogic.is_scheduled_tasks_active;
-            clicked => { DashboardLogic.select_repo(i) }
+
+        // Backup Repository Section
+        SectionHeader {
+            text: "Backup Repository";
+            icon: @image-url("../../assets/folder.svg");
+            clicked => { DashboardLogic.select_repo(-1) } // Selects the section, clears repo selection
         }
+        VerticalLayout {
+            padding-left: 20px;
+            for repo[i] in DashboardLogic.repositories: RepoSidebarItem {
+                text: repo.name;
+                active: DashboardLogic.active_repo_index == i && DashboardLogic.has_selected_repo && !DashboardLogic.is_scheduled_tasks_active;
+                clicked => { DashboardLogic.select_repo(i) }
+            }
+        }
+
         Rectangle { height: 20px; }
-        ScheduledTasksSidebarItem {
-            active: DashboardLogic.is_scheduled_tasks_active;
+
+        // Scheduled Task Section
+        SectionHeader {
+            text: "Scheduled Task";
+            icon: @image-url("../../assets/calendar-clock.svg");
             clicked => { DashboardLogic.select_scheduled_tasks() }
         }
+        // You can list tasks here if needed in the future
+        // For now, clicking the header navigates to the scheduler view
+
         Rectangle {} // Spacer
     }
 }

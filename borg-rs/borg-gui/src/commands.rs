@@ -1,18 +1,18 @@
 use anyhow::Result;
 
+use borg_core::lock::RepositoryLock;
 use borg_core::repository::RepoDescriptor;
+use borg_core::repository::Repository;
 use borg_core::storage::StorageConfig;
 use borg_core::storage::build_operator;
-use borg_core::repository::Repository;
-use borg_core::lock::RepositoryLock;
 
-pub use borg_core::archive::{BackupProgress, RestoreProgress};
 use borg_core::archive::{ArchiveCreator, ArchiveRestorer};
-use borg_core::compression::CompressionConfig;
+pub use borg_core::archive::{BackupProgress, RestoreProgress};
 use borg_core::compression::CompressionAlgorithm;
-use std::path::PathBuf;
-use std::collections::HashMap;
+use borg_core::compression::CompressionConfig;
 use chrono::{Local, TimeZone};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 pub fn generate_managed_archive_name() -> String {
     let now = Local::now();
@@ -28,15 +28,19 @@ pub struct CreateArchiveResult {
     pub tags: String,
 }
 
-fn human_bytes(size: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"]; 
+pub fn human_bytes(size: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut s = size as f64;
     let mut idx = 0usize;
     while s >= 1024.0 && idx < UNITS.len() - 1 {
         s /= 1024.0;
         idx += 1;
     }
-    if idx == 0 { format!("{} {}", size, UNITS[idx]) } else { format!("{:.1} {}", s, UNITS[idx]) }
+    if idx == 0 {
+        format!("{} {}", size, UNITS[idx])
+    } else {
+        format!("{:.1} {}", s, UNITS[idx])
+    }
 }
 
 pub async fn create_archive(
@@ -55,10 +59,14 @@ pub async fn create_archive(
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     let storage = if repo_path.starts_with("/") || repo_path.contains(":\\") {
-        StorageConfig::Local { path: PathBuf::from(repo_path) }
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
     } else {
-         // Fallback/simplified: in a real app we'd load the bookmark's config
-         StorageConfig::Local { path: PathBuf::from(repo_path) }
+        // Fallback/simplified: in a real app we'd load the bookmark's config
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
     };
 
     let op = build_operator(storage).map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -67,7 +75,7 @@ pub async fn create_archive(
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    
+
     // Parse compression
     let comp_config = if compression.is_empty() || compression == "none" {
         CompressionConfig::default()
@@ -92,19 +100,24 @@ pub async fn create_archive(
     let mut mapping = HashMap::new();
     for p in &path_bufs {
         if let Some(name) = p.file_name() {
-             mapping.insert(PathBuf::from(name), p.clone());
+            mapping.insert(PathBuf::from(name), p.clone());
         }
     }
 
-    let mut creator = ArchiveCreator::new(&mut repo)
-        .with_compression(comp_config);
-    
+    let mut creator = ArchiveCreator::new(&mut repo).with_compression(comp_config);
+
     if let Some(p) = progress {
         creator = creator.with_progress(p);
     }
-    
+
     let archive = creator
-        .create_with_mapping(archive_name, &path_bufs, Some(mapping), comment.clone(), tags.clone())
+        .create_with_mapping(
+            archive_name,
+            &path_bufs,
+            Some(mapping),
+            comment.clone(),
+            tags.clone(),
+        )
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
@@ -129,7 +142,10 @@ pub async fn create_archive(
 pub async fn list_archives(repo_path: &str) -> Result<Vec<String>> {
     // Placeholder for borg-core integration
     println!("Listing archives for repo: {}", repo_path);
-    Ok(vec!["daily-2023-10-24".to_string(), "daily-2023-10-23".to_string()])
+    Ok(vec![
+        "daily-2023-10-24".to_string(),
+        "daily-2023-10-23".to_string(),
+    ])
 }
 
 /// Initialize a repository using borg-core APIs based on wizard inputs.
@@ -148,7 +164,9 @@ pub async fn init_repository(
 ) -> Result<()> {
     // Build StorageConfig
     let storage = if repo_type == "local" {
-        StorageConfig::Local { path: std::path::PathBuf::from(path_url) }
+        StorageConfig::Local {
+            path: std::path::PathBuf::from(path_url),
+        }
     } else {
         // Very small parser: support s3://bucket/prefix
         if let Some(rest) = path_url.strip_prefix("s3://") {
@@ -189,7 +207,6 @@ pub async fn init_repository(
     Ok(())
 }
 
-
 /// Restore an archive with optional original path mode and GUI progress.
 pub async fn restore_archive(
     repo_path: &str,
@@ -200,9 +217,13 @@ pub async fn restore_archive(
     progress: Option<Box<dyn RestoreProgress>>,
 ) -> Result<()> {
     let storage = if repo_path.starts_with("/") || repo_path.contains(":\\") {
-        StorageConfig::Local { path: PathBuf::from(repo_path) }
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
     } else {
-        StorageConfig::Local { path: PathBuf::from(repo_path) }
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
     };
 
     let op = build_operator(storage).map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -234,4 +255,84 @@ pub async fn restore_archive(
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    pub path: String,
+    pub size: u64,
+    pub is_dir: bool,
+    pub mode: u32,
+    pub user: String,
+    pub group: String,
+    pub mtime: i64,
+}
+
+use std::collections::VecDeque;
+
+pub async fn list_archive_files(
+    repo_path: &str,
+    repo_password: Option<&str>,
+    archive_name: &str,
+) -> Result<Vec<FileEntry>> {
+    let storage = if repo_path.starts_with("/") || repo_path.contains(":\\") {
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
+    } else {
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
+    };
+
+    let op = build_operator(storage).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let repo = Repository::open(op, repo_path.to_string(), repo_password)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let manifest = repo
+        .load_manifest()
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let archive_ref = manifest
+        .archives
+        .iter()
+        .find(|a| a.name == archive_name)
+        .ok_or_else(|| anyhow::anyhow!("Archive not found"))?;
+
+    let root_id = archive_ref.id.clone();
+    let mut entries = Vec::new();
+    let mut stack = VecDeque::new();
+    stack.push_back((root_id, PathBuf::from("/")));
+
+    while let Some((tree_id, current_path)) = stack.pop_front() {
+        if let Ok(tree) = repo.get_tree(&tree_id).await {
+            for entry in tree.entries {
+                let full_path = current_path.join(&entry.name);
+                let path_str = full_path.to_string_lossy().to_string();
+
+                let (size, is_dir) = match &entry.kind {
+                    borg_core::metadata::EntryKind::File { size, .. } => (*size, false),
+                    borg_core::metadata::EntryKind::Dir { tree } => {
+                        stack.push_back((tree.clone(), full_path.clone()));
+                        (0, true)
+                    }
+                    _ => (0, false),
+                };
+
+                entries.push(FileEntry {
+                    path: path_str,
+                    size,
+                    is_dir,
+                    mode: entry.attributes.mode,
+                    user: entry.attributes.user.unwrap_or_else(|| "".to_string()),
+                    group: entry.attributes.group.unwrap_or_else(|| "".to_string()),
+                    mtime: entry.attributes.mtime,
+                });
+            }
+        }
+    }
+
+    Ok(entries)
 }
