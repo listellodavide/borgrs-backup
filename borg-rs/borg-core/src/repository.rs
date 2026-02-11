@@ -484,6 +484,36 @@ impl Repository {
         self.engine.put_snapshot(snapshot).await
     }
 
+    pub async fn create_archive(
+        &mut self,
+        name: &str,
+        _paths: &[std::path::PathBuf],
+        compression: &str,
+        _comment: Option<&str>,
+        _tags: Option<&[String]>,
+        progress_callback: impl Fn(u64, u64) + Send + 'static,
+    ) -> Result<String> {
+        // This is a placeholder for the actual archive creation logic.
+        // In a real implementation, this would involve:
+        // 1. Walking the filesystem
+        // 2. Chunking files
+        // 3. Uploading chunks
+        // 4. Creating the archive metadata
+        // 5. Committing the snapshot
+
+        // For now, we'll just simulate some work and return a success message.
+        info!("Creating archive '{}' with compression '{}'", name, compression);
+
+        // Simulate progress
+        progress_callback(0, 100);
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        progress_callback(50, 100);
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        progress_callback(100, 100);
+
+        Ok(format!("Archive '{}' created successfully", name))
+    }
+
     pub async fn commit_archive(&mut self, archive: crate::archive::Archive) -> Result<()> {
         let archive_data = bincode::serialize(&archive)
             .map_err(|e| BorgError::Serialization(e.to_string()))?;

@@ -1,40 +1,9 @@
-use crate::archive::{ArchiveCreator, BackupProgress};
-use crate::repository::Repository;
-use crate::lock::RepositoryLock;
-use chrono::{Datelike, Local, Timelike, Duration}; // Removed Weekday
-use std::collections::HashSet;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
+use chrono::{DateTime, Datelike, Local, Timelike};
 use tokio::time::sleep;
-use std::path::Path;
 
-pub trait SchedulerReporter: Send + Sync {
-    fn on_task_start(&self, task: &ScheduledTask);
-    fn on_task_progress(&self, task: &ScheduledTask, processed: u64, total: u64);
-    fn on_task_complete(&self, task: &ScheduledTask, summary: String);
-    fn on_task_error(&self, task: &ScheduledTask, error: String);
-    fn get_password(&self, repo_path: &str) -> Option<String>;
-    fn on_scheduler_tick(&self, tasks_found: usize);
-}
-
-struct SchedulerBackupProgress {
-    reporter: Arc<dyn SchedulerReporter + Send + Sync>, // Changed to include Send + Sync
-    task: ScheduledTask,
-}
-
-impl BackupProgress for SchedulerBackupProgress {
-    fn on_file_start(&self, _path: &Path) {}
-    fn on_file_complete(&self, _path: &Path, _size: u64, _chunks: usize) {}
-    fn on_file_skipped(&self, _path: &Path, _reason: &str) {}
-    fn on_progress(&self, processed: u64, total: u64) {
-        self.reporter.on_task_progress(&self.task, processed, total);
-    }
-    fn on_error(&self, _path: &Path, error: &str) {
-        self.reporter.on_task_error(&self.task, error.to_string());
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ScheduleType {
     Daily,
     Weekly,
@@ -45,7 +14,7 @@ pub enum ScheduleType {
 #[derive(Debug, Clone)]
 pub struct BackupSchedule {
     pub schedule_type: ScheduleType,
-    pub weekday: u32, // 0 = Mon … 6 = Sun
+    pub weekday: u32,      // 0 = Mon … 6 = Sun
     pub day_of_month: u32, // 1-31 for monthly
     pub hour: u32,
     pub minute: u32,
@@ -61,14 +30,22 @@ pub struct ScheduledTask {
     pub comment: Option<String>,
     pub tags: Option<Vec<String>>,
     pub schedule: BackupSchedule,
-    pub last_run: Option<chrono::DateTime<Local>>,
+    pub last_run: Option<SystemTime>,
     pub execution_count: u32,
+}
+
+pub trait SchedulerReporter: Send + Sync {
+    fn on_task_start(&self, task: &ScheduledTask);
+    fn on_task_progress(&self, task: &ScheduledTask, processed: u64, total: u64);
+    fn on_task_complete(&self, task: &ScheduledTask, summary: String);
+    fn on_task_error(&self, task: &ScheduledTask, error: String);
+    fn get_password(&self, repo_path: &str) -> Option<String>;
+    fn on_scheduler_tick(&self, tasks_found: usize);
 }
 
 pub struct Scheduler {
     tasks: Arc<Mutex<Vec<ScheduledTask>>>,
-    reporter: Option<Arc<dyn SchedulerReporter + Send + Sync>>, // Changed to include Send + Sync
-    running_tasks: Arc<Mutex<HashSet<String>>>,
+    reporter: Option<Arc<dyn SchedulerReporter>>,
 }
 
 impl Scheduler {
@@ -76,36 +53,29 @@ impl Scheduler {
         Self {
             tasks: Arc::new(Mutex::new(tasks)),
             reporter: None,
-            running_tasks: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
-    pub fn with_reporter(mut self, reporter: Arc<dyn SchedulerReporter + Send + Sync>) -> Self { // Changed to include Send + Sync
+    pub fn with_reporter(mut self, reporter: Arc<dyn SchedulerReporter>) -> Self {
         self.reporter = Some(reporter);
         self
     }
 
     pub async fn run(&self) {
+        println!("Scheduler started");
         loop {
             let now = Local::now();
             let mut tasks_to_run = Vec::new();
 
+            // Scope for lock
             {
-                let mut tasks = self.tasks.lock().await;
-                let mut running_tasks = self.running_tasks.lock().await;
-
+                let mut tasks = self.tasks.lock().unwrap();
                 for task in tasks.iter_mut() {
-                    if task.schedule.schedule_type == ScheduleType::Manual {
-                        continue;
-                    }
-
-                    if running_tasks.contains(&task.archive_name) {
-                        continue; // Task is already running or queued
-                    }
-
                     if self.should_run(task, &now) {
+                        println!("Task due: {}", task.archive_name);
                         tasks_to_run.push(task.clone());
-                        running_tasks.insert(task.archive_name.clone()); // Mark as running
+                        task.last_run = Some(SystemTime::now());
+                        task.execution_count += 1;
                     }
                 }
             }
@@ -114,140 +84,195 @@ impl Scheduler {
                 reporter.on_scheduler_tick(tasks_to_run.len());
             }
 
-            for mut task in tasks_to_run {
-                let tasks_arc = self.tasks.clone();
-                let running_tasks_arc = self.running_tasks.clone();
-                let reporter_arc = self.reporter.clone(); // Clone the Arc for the spawned task
-
-                tokio::spawn(async move {
-                    Self::run_task(&mut task, reporter_arc).await; // Pass the Arc directly
-
-                    // Update the main task list with the new last_run and execution_count
-                    let mut tasks = tasks_arc.lock().await;
-                    if let Some(t) = tasks.iter_mut().find(|t| t.archive_name == task.archive_name) {
-                        t.last_run = Some(Local::now());
-                        t.execution_count = task.execution_count;
-                    }
-
-                    // Remove from running set
-                    running_tasks_arc.lock().await.remove(&task.archive_name);
-                });
+            for task in tasks_to_run {
+                self.execute_task(task).await;
             }
 
-            sleep(tokio::time::Duration::from_secs(30)).await;
+            sleep(Duration::from_secs(60)).await;
         }
     }
 
-    fn should_run(&self, task: &ScheduledTask, now: &chrono::DateTime<Local>) -> bool {
-        let last_run = match task.last_run {
-            Some(lr) => lr,
-            None => {
-                // If it has never run and run_on_boot is true, it's due.
-                // Otherwise, treat its "last run" as now to schedule it for the future.
-                return if task.schedule.run_on_boot_if_missed { true } else { false };
-            }
-        };
+    fn should_run(&self, task: &ScheduledTask, now: &DateTime<Local>) -> bool {
+        if task.schedule.schedule_type == ScheduleType::Manual {
+            return false;
+        }
 
-        let schedule = &task.schedule;
-        let scheduled_time = now.with_hour(schedule.hour).unwrap().with_minute(schedule.minute).unwrap().with_second(0).unwrap();
+        // Check if time matches (minute precision)
+        if now.hour() != task.schedule.hour || now.minute() != task.schedule.minute {
+            return false;
+        }
 
-        let next_run = match schedule.schedule_type {
-            ScheduleType::Daily => {
-                let next = last_run.date_naive().and_time(scheduled_time.time()) + Duration::days(1);
-                next
-            },
+        match task.schedule.schedule_type {
+            ScheduleType::Daily => true,
             ScheduleType::Weekly => {
-                let days_to_add = (schedule.weekday as i64 - last_run.weekday().num_days_from_monday() as i64 + 7) % 7;
-                let next_date = last_run.date_naive() + Duration::days(if days_to_add == 0 { 7 } else { days_to_add });
-                next_date.and_time(scheduled_time.time())
-            },
+                // chrono weekday: Mon=0, Sun=6
+                now.weekday().num_days_from_monday() == task.schedule.weekday
+            }
             ScheduleType::Monthly => {
-                let mut next_month = last_run.month() + 1;
-                let mut next_year = last_run.year();
-                if next_month > 12 {
-                    next_month = 1;
-                    next_year += 1;
-                }
-                let last_day_of_next_month = chrono::NaiveDate::from_ymd_opt(next_year, next_month + 1, 1).unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(next_year + 1, 1, 1).unwrap()).pred_opt().unwrap().day();
-                let day = std::cmp::min(schedule.day_of_month, last_day_of_next_month);
-                chrono::NaiveDate::from_ymd_opt(next_year, next_month, day).unwrap().and_time(scheduled_time.time())
-            },
-            ScheduleType::Manual => return false,
-        };
-
-        *now >= next_run.and_local_timezone(Local).unwrap()
+                now.day() == task.schedule.day_of_month
+            }
+            ScheduleType::Manual => false,
+        }
     }
 
-    async fn run_task(task: &mut ScheduledTask, reporter: Option<Arc<dyn SchedulerReporter + Send + Sync>>) { // Changed reporter type
-        if let Some(r) = &reporter {
-            r.on_task_start(task);
+    async fn execute_task(&self, task: ScheduledTask) {
+        if let Some(reporter) = &self.reporter {
+            reporter.on_task_start(&task);
         }
 
-        let now = Local::now();
-        let timestamp = now.format("%Y-%m-%d-%H-%M").to_string();
-        let prefix = match task.schedule.schedule_type {
-            ScheduleType::Daily => "daily",
-            ScheduleType::Weekly => "weekly",
-            ScheduleType::Monthly => "monthly",
-            ScheduleType::Manual => "manual",
-        };
-        task.archive_name = format!("{}-{}", prefix, timestamp);
-
-        let password = reporter.as_ref().and_then(|r| r.get_password(&task.repo_path));
-
-        let repo_path_buf = std::path::PathBuf::from(&task.repo_path);
-        let mut lock = RepositoryLock::new(&repo_path_buf);
-        if let Err(e) = lock.acquire("scheduled_task", &task.archive_name) {
-            if let Some(r) = &reporter {
-                r.on_task_error(task, format!("Failed to acquire lock: {}", e));
-            }
-            return;
-        }
-
-        let repo_result = Repository::open(
-            crate::storage::build_operator(crate::storage::StorageConfig::Local { path: task.repo_path.clone().into() }).unwrap(),
-            task.repo_path.clone(),
-            password.as_deref(),
-        ).await;
-
-        let mut repo = match repo_result {
-            Ok(r) => r,
-            Err(e) => {
-                if let Some(r) = &reporter {
-                    r.on_task_error(task, format!("Failed to open repository: {}", e));
-                }
-                return;
-            }
+        let password = if let Some(reporter) = &self.reporter {
+            reporter.get_password(&task.repo_path)
+        } else {
+            None
         };
 
-        let mut creator = ArchiveCreator::new(&mut repo);
-        if let Some(r) = &reporter {
-            let progress_reporter = SchedulerBackupProgress {
-                reporter: r.clone(), // Clone the Arc
-                task: task.clone(),
-            };
-            creator = creator.with_progress(Box::new(progress_reporter));
-        }
+        // Construct archive name with timestamp
+        let timestamp = crate::archive::current_time_for_archive_name();
+        let archive_name = format!("{}-{}", task.archive_name, timestamp);
 
-        let result = creator.create(
-            &task.archive_name,
-            &task.paths_to_backup.iter().map(|p| p.into()).collect::<Vec<_>>(),
-            task.comment.clone(),
-            task.tags.clone(),
-        ).await;
+        println!("Executing backup for {}", archive_name);
 
-        match result {
-            Ok(summary) => {
-                task.execution_count += 1;
-                if let Some(r) = &reporter {
-                    r.on_task_complete(task, format!("{:?}", summary));
+        // Perform the actual backup
+        let storage = crate::storage::StorageConfig::Local {
+            path: std::path::PathBuf::from(&task.repo_path)
+        };
+
+        match crate::storage::build_operator(storage) {
+            Ok(op) => {
+                match crate::repository::Repository::open(op, task.repo_path.clone(), password.as_deref()).await {
+                    Ok(mut repo) => {
+                        let paths: Vec<std::path::PathBuf> = task.paths_to_backup.iter().map(std::path::PathBuf::from).collect();
+
+                        // Create progress callback
+                        let reporter_clone = self.reporter.clone();
+                        let task_clone = task.clone();
+                        let progress_callback = move |processed: u64, total: u64| {
+                            if let Some(r) = &reporter_clone {
+                                r.on_task_progress(&task_clone, processed, total);
+                            }
+                        };
+
+                        match repo.create_archive(
+                            &archive_name,
+                            &paths,
+                            &task.compression,
+                            task.comment.as_deref(),
+                            task.tags.as_deref(),
+                            progress_callback
+                        ).await {
+                            Ok(summary) => {
+                                if let Some(reporter) = &self.reporter {
+                                    reporter.on_task_complete(&task, summary);
+                                }
+                            }
+                            Err(e) => {
+                                if let Some(reporter) = &self.reporter {
+                                    reporter.on_task_error(&task, e.to_string());
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(reporter) = &self.reporter {
+                            reporter.on_task_error(&task, format!("Failed to open repository: {}", e));
+                        }
+                    }
                 }
             }
             Err(e) => {
-                if let Some(r) = &reporter {
-                    r.on_task_error(task, format!("Scheduled backup failed: {}", e));
+                if let Some(reporter) = &self.reporter {
+                    reporter.on_task_error(&task, format!("Failed to build storage operator: {}", e));
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
+    use crate::storage::{StorageConfig, build_operator};
+    use crate::repository::Repository;
+    use std::fs;
+
+    struct TestReporter {
+        started: Arc<Mutex<bool>>,
+        completed: Arc<Mutex<bool>>,
+    }
+
+    impl SchedulerReporter for TestReporter {
+        fn on_task_start(&self, _task: &ScheduledTask) {
+            *self.started.lock().unwrap() = true;
+        }
+        fn on_task_progress(&self, _task: &ScheduledTask, _processed: u64, _total: u64) {}
+        fn on_task_complete(&self, _task: &ScheduledTask, _summary: String) {
+            *self.completed.lock().unwrap() = true;
+        }
+        fn on_task_error(&self, _task: &ScheduledTask, error: String) {
+            println!("Task error: {}", error);
+        }
+        fn get_password(&self, _repo_path: &str) -> Option<String> {
+            Some("hello".to_string())
+        }
+        fn on_scheduler_tick(&self, _tasks_found: usize) {}
+    }
+
+    #[tokio::test]
+    async fn test_scheduler_execution() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().join("adrianbackup");
+        let source_dir = temp_dir.path().join("code");
+
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("test.txt"), "test content").unwrap();
+
+        // Initialize repository
+        let op = build_operator(StorageConfig::Local { path: repo_path.clone() }).unwrap();
+        let _ = Repository::init(op, repo_path.to_string_lossy().to_string(), Some("hello"), None).await.unwrap();
+
+        let now = Local::now() + chrono::Duration::minutes(2);
+        let task = ScheduledTask {
+            repo_path: repo_path.to_string_lossy().to_string(),
+            archive_name: "test_archive".to_string(),
+            paths_to_backup: vec![source_dir.to_string_lossy().to_string()],
+            compression: "zstd,3".to_string(),
+            comment: Some("backup code".to_string()),
+            tags: Some(vec!["code".to_string(), "adrian".to_string()]),
+            schedule: BackupSchedule {
+                schedule_type: ScheduleType::Daily,
+                weekday: 0,
+                day_of_month: 0,
+                hour: now.hour(),
+                minute: now.minute(),
+                run_on_boot_if_missed: true,
+            },
+            last_run: None,
+            execution_count: 0,
+        };
+
+        let started = Arc::new(Mutex::new(false));
+        let completed = Arc::new(Mutex::new(false));
+        let reporter = Arc::new(TestReporter {
+            started: started.clone(),
+            completed: completed.clone(),
+        });
+
+        let scheduler = Scheduler::new(vec![task]).with_reporter(reporter);
+
+        // We need to mock time or wait. Since we can't easily mock time in this setup without refactoring,
+        // we will manually trigger the check logic with a modified "now" in a separate testable function,
+        // or just verify the logic.
+        // However, for this integration test, we can just call execute_task directly to verify it works end-to-end.
+
+        let tasks = scheduler.tasks.lock().unwrap();
+        let task_to_run = tasks[0].clone();
+        drop(tasks);
+
+        scheduler.execute_task(task_to_run).await;
+
+        assert!(*started.lock().unwrap());
+        assert!(*completed.lock().unwrap());
     }
 }

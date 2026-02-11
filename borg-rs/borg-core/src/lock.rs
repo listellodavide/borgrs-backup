@@ -163,7 +163,7 @@ impl Drop for RepositoryLock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    
     use tempfile::TempDir;
 
     #[test]
@@ -189,7 +189,7 @@ mod tests {
         let mut lock1 = RepositoryLock::new(repo_path);
         lock1.acquire("task1", "archive1").unwrap();
 
-        let lock2 = RepositoryLock::new(repo_path);
+        let mut lock2 = RepositoryLock::new(repo_path);
         assert!(lock2.is_locked().unwrap());
         assert!(lock2.acquire("task2", "archive2").is_err());
 

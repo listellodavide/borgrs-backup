@@ -986,6 +986,20 @@ pub fn current_time_hh_mm_dd_mm_yyyy() -> String {
     ts.format("%H:%M %d.%m.%Y").to_string()
 }
 
+/// Returns current time formatted for archive names.
+pub fn current_time_for_archive_name() -> String {
+    let ntp_servers = [
+        "ntp1.inrim.it",
+        "ntp2.inrim.it",
+        "0.it.pool.ntp.org",
+        "1.it.pool.ntp.org",
+        "0.ch.pool.ntp.org",
+        "1.ch.pool.ntp.org",
+    ];
+    let ts = get_ntp_timestamp(&ntp_servers);
+    ts.format("%Y-%m-%dT%H-%M-%S").to_string()
+}
+
 /// Get the system hostname
 fn gethostname() -> String {
     hostname::get()
