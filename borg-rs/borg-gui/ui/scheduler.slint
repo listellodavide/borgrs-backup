@@ -30,7 +30,7 @@ export component SchedulerView inherits Rectangle {
             background: Theme.mantle;
             border-radius: 8px;
             padding: 20px;
-            height: 320px;
+            height: 380px; // Increased height to accommodate new field
 
             VerticalLayout {
                 spacing: 15px;
@@ -53,6 +53,22 @@ export component SchedulerView inherits Rectangle {
                     }
                     VerticalLayout {
                         spacing: 5px;
+                        Text { text: "Archive (Optional)"; color: Theme.subtext; }
+                        ComboBox {
+                            model: SchedulerLogic.available_archive_names;
+                            current-value: SchedulerLogic.selected_task_archive_name;
+                            selected(value) => {
+                                SchedulerLogic.selected_task_archive_name = value;
+                                SchedulerLogic.generate_task_name();
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 20px;
+                    VerticalLayout {
+                        spacing: 5px;
                         Text { text: "Frequency"; color: Theme.subtext; }
                         ComboBox {
                             model: ["Daily", "Weekly", "Monthly", "Manual"];
@@ -66,10 +82,6 @@ export component SchedulerView inherits Rectangle {
                             }
                         }
                     }
-                }
-
-                HorizontalLayout {
-                    spacing: 20px;
                     VerticalLayout {
                         spacing: 5px;
                         Text { text: "Start Time (24H)"; color: Theme.subtext; }
@@ -96,6 +108,10 @@ export component SchedulerView inherits Rectangle {
                             }
                         }
                     }
+                }
+
+                HorizontalLayout {
+                    spacing: 20px;
                     VerticalLayout {
                         spacing: 5px;
                         Text { text: "Day of Week / Month"; color: Theme.subtext; }
@@ -124,6 +140,7 @@ export component SchedulerView inherits Rectangle {
                             // Spacer for Daily/Manual
                         }
                     }
+                    Rectangle {} // Spacer
                 }
 
                 CheckBox {
@@ -155,6 +172,7 @@ export component SchedulerView inherits Rectangle {
                         padding-left: 15px;
                         Text { text: "Active"; width: 60px; color: Theme.subtext; vertical-alignment: center; }
                         Text { text: "Repository"; width: 150px; color: Theme.subtext; vertical-alignment: center; }
+                        Text { text: "Archive"; width: 150px; color: Theme.subtext; vertical-alignment: center; }
                         Text { text: "Schedule"; width: 200px; color: Theme.subtext; vertical-alignment: center; }
                         Text { text: "Last Execution"; width: 150px; color: Theme.subtext; vertical-alignment: center; }
                         Rectangle {}
@@ -179,6 +197,7 @@ export component SchedulerView inherits Rectangle {
                                     }
                                 }
                                 Text { text: task.repo_name; width: 150px; color: Theme.text; vertical-alignment: center; }
+                                Text { text: task.archive_name; width: 150px; color: Theme.text; vertical-alignment: center; }
                                 Text {
                                     text: (task.schedule.schedule_type == ScheduleType.Daily ? "Daily" :
                                           (task.schedule.schedule_type == ScheduleType.Weekly ? "Weekly" :

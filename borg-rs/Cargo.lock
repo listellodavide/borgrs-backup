@@ -1140,6 +1140,7 @@ name = "borg-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode 1.3.3",
  "borg-core",
  "chrono",
  "keyring",

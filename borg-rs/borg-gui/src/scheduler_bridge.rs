@@ -127,31 +127,13 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                     // Spawn async task to load archives from this repository
                     let window_weak2 = window_weak.clone();
                     tokio::spawn(async move {
-                        match async {
-                            let storage = borg_core::storage::StorageConfig::Local {
-                                path: std::path::PathBuf::from(&repo_path)
-                            };
-                            let op = borg_core::storage::build_operator(storage)
-                                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                            let repo = borg_core::repository::Repository::open(
-                                op,
-                                repo_path.clone(),
-                                repo_password.as_deref()
-                            ).await
-                                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                            let manifest = repo.load_manifest()
-                                .await
-                                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                            Ok::<_, anyhow::Error>(manifest.archives)
-                        }.await {
+                        match crate::commands::list_archives(&repo_path, repo_password.as_deref()).await {
                             Ok(archive_list) => {
                                 let _ = slint::invoke_from_event_loop(move || {
                                     if let Some(w) = window_weak2.upgrade() {
                                         let archive_names: Vec<slint::SharedString> = archive_list
                                             .into_iter()
-                                            .map(|archive| {
-                                                archive.name.clone().into()
-                                            })
+                                            .map(|name| name.into())
                                             .collect();
 
                                         let scheduler = w.global::<SchedulerLogic>();
@@ -162,10 +144,16 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                             }
                             Err(e) => {
                                 let error_msg = format!("Failed to load archives: {}", e);
+                                println!("{}", error_msg); // Log to console
                                 let _ = slint::invoke_from_event_loop(move || {
                                     if let Some(w) = window_weak2.upgrade() {
-                                        w.global::<DashboardLogic>()
-                                            .set_terminal_text(error_msg.into());
+                                        // Optionally show error in UI, but maybe not block the user
+                                        // w.global::<DashboardLogic>().set_terminal_text(error_msg.into());
+
+                                        // Clear the list on error
+                                        let scheduler = w.global::<SchedulerLogic>();
+                                        let names_model = std::rc::Rc::new(slint::VecModel::from(Vec::<slint::SharedString>::new()));
+                                        scheduler.set_available_archive_names(names_model.into());
                                     }
                                 });
                             }

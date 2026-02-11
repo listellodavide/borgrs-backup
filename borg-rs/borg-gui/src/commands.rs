@@ -5,14 +5,15 @@ use borg_core::repository::RepoDescriptor;
 use borg_core::repository::Repository;
 use borg_core::storage::StorageConfig;
 use borg_core::storage::build_operator;
+use borg_core::utils::human_bytes;
 
-use borg_core::archive::{ArchiveCreator, ArchiveRestorer};
+use borg_core::archive::{Archive, ArchiveCreator, ArchiveRestorer, ItemType};
 pub use borg_core::archive::{BackupProgress, RestoreProgress};
 use borg_core::compression::CompressionAlgorithm;
 use borg_core::compression::CompressionConfig;
 use chrono::{Local, TimeZone};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn generate_managed_archive_name() -> String {
     let now = Local::now();
@@ -26,21 +27,6 @@ pub struct CreateArchiveResult {
     pub hostname: String,
     pub comment: String,
     pub tags: String,
-}
-
-pub fn human_bytes(size: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut s = size as f64;
-    let mut idx = 0usize;
-    while s >= 1024.0 && idx < UNITS.len() - 1 {
-        s /= 1024.0;
-        idx += 1;
-    }
-    if idx == 0 {
-        format!("{} {}", size, UNITS[idx])
-    } else {
-        format!("{:.1} {}", s, UNITS[idx])
-    }
 }
 
 pub async fn create_archive(
@@ -70,11 +56,16 @@ pub async fn create_archive(
     };
 
     let op = build_operator(storage).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    // Open the repository. It is expected to be initialized already.
     let mut repo = Repository::open(op, repo_path.to_string(), repo_password)
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-    let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let path_bufs: Vec<PathBuf> = paths
+        .iter()
+        .map(|p| Path::new(p).canonicalize().unwrap())
+        .collect();
 
     // Parse compression
     let comp_config = if compression.is_empty() || compression == "none" {
@@ -95,10 +86,11 @@ pub async fn create_archive(
         }
     };
 
-    // Build path mapping (pointer to map of such paths)
-    // For each source path, we map its final component name in the archive to its absolute path
+    // Build path mapping. The goal is to preserve the hierarchical structure
+    // of the input paths within the archive.
     let mut mapping = HashMap::new();
     for p in &path_bufs {
+        // The archive path should be the same as the input path's file name.
         if let Some(name) = p.file_name() {
             mapping.insert(PathBuf::from(name), p.clone());
         }
@@ -121,6 +113,8 @@ pub async fn create_archive(
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
+    // Note: commit_archive is now called inside ArchiveCreator::create_with_mapping
+
     // Build result summary
     let time_local = Local.from_utc_datetime(&archive.metadata.time.naive_utc());
     let date = time_local.format("%Y-%m-%d %H:%M").to_string();
@@ -139,13 +133,30 @@ pub async fn create_archive(
     })
 }
 
-pub async fn list_archives(repo_path: &str) -> Result<Vec<String>> {
-    // Placeholder for borg-core integration
-    println!("Listing archives for repo: {}", repo_path);
-    Ok(vec![
-        "daily-2023-10-24".to_string(),
-        "daily-2023-10-23".to_string(),
-    ])
+
+pub async fn list_archives(repo_path: &str, repo_password: Option<&str>) -> Result<Vec<String>> {
+    let storage = if repo_path.starts_with("/") || repo_path.contains(":\\") {
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
+    } else {
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
+    };
+
+    let op = build_operator(storage).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let repo = Repository::open(op, repo_path.to_string(), repo_password)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let manifest = repo
+        .load_manifest()
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let archives = manifest.archives.into_iter().map(|a| a.name).collect();
+    Ok(archives)
 }
 
 /// Initialize a repository using borg-core APIs based on wizard inputs.
@@ -268,8 +279,6 @@ pub struct FileEntry {
     pub mtime: i64,
 }
 
-use std::collections::VecDeque;
-
 pub async fn list_archive_files(
     repo_path: &str,
     repo_password: Option<&str>,
@@ -299,40 +308,28 @@ pub async fn list_archive_files(
         .archives
         .iter()
         .find(|a| a.name == archive_name)
-        .ok_or_else(|| anyhow::anyhow!("Archive not found"))?;
+        .ok_or_else(|| anyhow::anyhow!("Archive '{}' not found", archive_name))?;
 
-    let root_id = archive_ref.id.clone();
-    let mut entries = Vec::new();
-    let mut stack = VecDeque::new();
-    stack.push_back((root_id, PathBuf::from("/")));
+    // The ID in the manifest points to the chunk containing the bincode-serialized Archive struct.
+    // We need to get this chunk and deserialize it, not treat it as a JSON tree.
+    let chunk = repo.get_chunk(&archive_ref.id).await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-    while let Some((tree_id, current_path)) = stack.pop_front() {
-        if let Ok(tree) = repo.get_tree(&tree_id).await {
-            for entry in tree.entries {
-                let full_path = current_path.join(&entry.name);
-                let path_str = full_path.to_string_lossy().to_string();
+    let archive: Archive = bincode::deserialize(&chunk.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize archive data: {}", e))?;
 
-                let (size, is_dir) = match &entry.kind {
-                    borg_core::metadata::EntryKind::File { size, .. } => (*size, false),
-                    borg_core::metadata::EntryKind::Dir { tree } => {
-                        stack.push_back((tree.clone(), full_path.clone()));
-                        (0, true)
-                    }
-                    _ => (0, false),
-                };
-
-                entries.push(FileEntry {
-                    path: path_str,
-                    size,
-                    is_dir,
-                    mode: entry.attributes.mode,
-                    user: entry.attributes.user.unwrap_or_else(|| "".to_string()),
-                    group: entry.attributes.group.unwrap_or_else(|| "".to_string()),
-                    mtime: entry.attributes.mtime,
-                });
-            }
+    let entries: Vec<FileEntry> = archive.items.into_iter().map(|item| {
+        FileEntry {
+            path: item.path.to_string_lossy().to_string(),
+            size: item.size,
+            is_dir: item.item_type == ItemType::Directory,
+            mode: item.attrs.mode,
+            // The FileEntry struct expects user/group as strings, but the archive stores UID/GID.
+            // For now, we'll convert them to strings. A real implementation might resolve them to names.
+            user: item.attrs.uid.to_string(),
+            group: item.attrs.gid.to_string(),
+            mtime: item.attrs.mtime,
         }
-    }
+    }).collect();
 
     Ok(entries)
 }
@@ -340,37 +337,40 @@ pub async fn list_archive_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
+    use std::fs::{self, File};
     use std::io::Write;
     use tempfile::tempdir;
+    use std::collections::HashSet;
 
     #[tokio::test]
     async fn test_create_and_list_archive() -> Result<()> {
         let repo_dir = tempdir()?;
         let repo_path = repo_dir.path().to_str().unwrap();
+        let password = "dummy";
 
         // 1. Init Repo
-        init_repository("local", "test-repo", repo_path, None, None, None).await?;
+        init_repository("local", "test-repo", repo_path, None, None, Some(password)).await?;
 
-        // 2. Create source files
+        // 2. Create source files with a hierarchical structure
         let src_dir = tempdir()?;
-        let file1_path = src_dir.path().join("file1.txt");
-        let mut file1 = File::create(&file1_path)?;
-        file1.write_all(b"content1")?;
+        let src_path = src_dir.path();
+        let src_dir_name = src_path.file_name().unwrap().to_str().unwrap();
 
-        let file2_path = src_dir.path().join("file2.txt");
-        let mut file2 = File::create(&file2_path)?;
-        file2.write_all(b"content2")?;
+        fs::write(src_path.join("file1.txt"), "content1")?;
+        fs::create_dir(src_path.join("subdir"))?;
+        fs::write(src_path.join("subdir/file2.txt"), "content2")?;
 
-        let paths = vec![
-            file1_path.to_str().unwrap().to_string(),
-            file2_path.to_str().unwrap().to_string(),
-        ];
+        // 3. Create archive from the root of the source directory
+        // We'll also test the "./" relative path handling by changing directory.
+        let current_dir = std::env::current_dir()?;
+        std::env::set_current_dir(src_path.parent().unwrap())?;
+        let relative_src_path = format!("./{}", src_dir_name);
 
-        // 3. Create Archive
+        let paths = vec![relative_src_path];
+
         let res = create_archive(
             repo_path,
-            None,
+            Some(password),
             "test-archive",
             paths,
             "none",
@@ -380,18 +380,33 @@ mod tests {
         )
         .await;
 
+        // Restore current directory
+        std::env::set_current_dir(current_dir)?;
+
         assert!(res.is_ok());
 
         // 4. List Files
-        let files = list_archive_files(repo_path, None, "test-archive").await?;
+        let files = list_archive_files(repo_path, Some(password), "test-archive").await?;
 
         // 5. Verify contents
-        let paths_found: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+        let paths_found: HashSet<String> = files.iter().map(|f| f.path.clone()).collect();
         println!("Found paths in archive: {:?}", paths_found);
 
-        // Depending on mapping logic in create_archive, paths might be "file1.txt" or "/file1.txt"
-        assert!(paths_found.iter().any(|p| p.ends_with("file1.txt")));
-        assert!(paths_found.iter().any(|p| p.ends_with("file2.txt")));
+        // The archive should contain the items from src_path, with preserved hierarchy.
+        // The root of the archive will be the directory itself.
+        let expected_paths: HashSet<String> = [
+            format!("{}/file1.txt", src_dir_name),
+            format!("subdir"),
+            format!("subdir/file2.txt", ),
+            format!("{}", src_dir_name),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        let paths_found_set: HashSet<String> = paths_found.into_iter().map(|p| p.trim_start_matches('/').to_string()).collect();
+
+        assert_eq!(paths_found_set, expected_paths);
 
         Ok(())
     }

@@ -15,9 +15,12 @@ use async_trait::async_trait;
 use futures_util::{StreamExt, TryStreamExt};
 use opendal::Operator;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 use tracing::{debug, info, instrument, warn};
 use hex;
+
+use crate::archive::{ArchiveCreator, BackupProgress};
 
 /// Legacy Manifest structure for backward compatibility
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -487,31 +490,87 @@ impl Repository {
     pub async fn create_archive(
         &mut self,
         name: &str,
-        _paths: &[std::path::PathBuf],
+        paths: &[PathBuf],
         compression: &str,
-        _comment: Option<&str>,
-        _tags: Option<&[String]>,
-        progress_callback: impl Fn(u64, u64) + Send + 'static,
+        comment: Option<&str>,
+        tags: Option<&[String]>,
+        progress_callback: impl Fn(u64, u64) + Send + Sync + 'static,
     ) -> Result<String> {
-        // This is a placeholder for the actual archive creation logic.
-        // In a real implementation, this would involve:
-        // 1. Walking the filesystem
-        // 2. Chunking files
-        // 3. Uploading chunks
-        // 4. Creating the archive metadata
-        // 5. Committing the snapshot
-
-        // For now, we'll just simulate some work and return a success message.
         info!("Creating archive '{}' with compression '{}'", name, compression);
 
-        // Simulate progress
-        progress_callback(0, 100);
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        progress_callback(50, 100);
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        progress_callback(100, 100);
+        // Adapter for progress callback
+        struct ProgressAdapter<F>(F)
+        where
+            F: Fn(u64, u64) + Send + Sync;
 
-        Ok(format!("Archive '{}' created successfully", name))
+        impl<F> BackupProgress for ProgressAdapter<F>
+        where
+            F: Fn(u64, u64) + Send + Sync,
+        {
+            fn on_file_start(&self, _path: &Path) {}
+            fn on_file_complete(&self, _path: &Path, _size: u64, _chunks: usize) {}
+            fn on_file_skipped(&self, _path: &Path, _reason: &str) {}
+            fn on_progress(&self, processed: u64, total: u64) {
+                (self.0)(processed, total);
+            }
+            fn on_error(&self, path: &Path, error: &str) {
+                warn!("Error processing {}: {}", path.display(), error);
+            }
+        }
+
+        let progress = Box::new(ProgressAdapter(progress_callback));
+
+        // Parse compression config
+        let comp_config = if compression.is_empty() || compression == "none" {
+            CompressionConfig::default()
+        } else {
+            let parts: Vec<&str> = compression.split(',').collect();
+            let algo = crate::compression::CompressionAlgorithm::from_str(parts[0])
+                .unwrap_or(crate::compression::CompressionAlgorithm::Zstd);
+            let level = if parts.len() > 1 {
+                parts[1].parse().unwrap_or(3)
+            } else {
+                3
+            };
+            CompressionConfig {
+                algorithm: algo,
+                level: crate::compression::CompressionLevel::new(level).unwrap_or_default(),
+                auto_detect: false,
+                min_size: 1024,
+            }
+        };
+
+        // Build path mapping
+        let mut mapping = HashMap::new();
+        for p in paths {
+            if let Some(name) = p.file_name() {
+                mapping.insert(PathBuf::from(name), p.clone());
+            }
+        }
+
+        let creator = ArchiveCreator::new(self)
+            .with_compression(comp_config)
+            .with_progress(progress);
+
+        let archive = creator
+            .create_with_mapping(
+                name,
+                paths,
+                Some(mapping),
+                comment.map(String::from),
+                tags.map(|s| s.to_vec()),
+            )
+            .await?;
+
+        let summary = format!(
+            "Archive '{}' created successfully. Stats: {} files, {} dirs, size {}.",
+            name,
+            archive.stats.nfiles,
+            archive.stats.ndirs,
+            crate::utils::human_bytes(archive.stats.original_size)
+        );
+
+        Ok(summary)
     }
 
     pub async fn commit_archive(&mut self, archive: crate::archive::Archive) -> Result<()> {
