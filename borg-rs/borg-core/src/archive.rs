@@ -403,10 +403,24 @@ impl<'a> ArchiveCreator<'a> {
         }
         self.progress.on_progress(0, total_size, None);
 
-        // Process each path
+        // Process each path. If a mapping is provided, determine the mapping key (prefix)
+        // for each root so item paths inside the archive are prefixed and remain unique.
         for path in paths {
-            self.process_path(path, path, &mut items, &mut stats, total_size)
-                .await?;
+            let root_prefix: Option<PathBuf> = metadata.path_mapping.as_ref().and_then(|m| {
+                m.iter()
+                    .find(|(_k, v)| v.as_path() == path)
+                    .map(|(k, _v)| k.clone())
+            });
+
+            self.process_path(
+                path,
+                path,
+                root_prefix.as_ref(),
+                &mut items,
+                &mut stats,
+                total_size,
+            )
+            .await?;
         }
 
         let archive = Archive {
@@ -431,6 +445,7 @@ impl<'a> ArchiveCreator<'a> {
         &mut self,
         root: &Path,
         path: &Path,
+        root_prefix: Option<&PathBuf>,
         items: &mut Vec<ArchiveItem>,
         stats: &mut ArchiveStats,
         total_size: u64,
@@ -574,11 +589,11 @@ impl<'a> ArchiveCreator<'a> {
 
                 stats.nfiles += 1;
                 stats.original_size += meta.len();
-                self.progress.on_progress(
-                    stats.original_size,
-                    total_size,
-                    Some(relative_path.to_str().unwrap_or("")),
-                );
+                // Report progress with the full source path (path) instead of only the relative
+                // path so the UI can distinguish identical filenames coming from different roots.
+                let display_path = path.to_str().unwrap_or("");
+                self.progress
+                    .on_progress(stats.original_size, total_size, Some(display_path));
 
                 self.progress
                     .on_file_complete(path, meta.len(), chunk_ids.len());
