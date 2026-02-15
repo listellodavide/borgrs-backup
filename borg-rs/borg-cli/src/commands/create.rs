@@ -201,7 +201,7 @@ impl BackupProgress for CliProgress {
 
     fn on_file_skipped(&self, _path: &Path, _reason: &str) {}
 
-    fn on_progress(&self, _processed: u64, _total: u64) {}
+    fn on_progress(&self, _processed: u64, _total: u64, _filename: Option<&str>) {}
 
     fn on_error(&self, _path: &Path, _error: &str) {}
 }

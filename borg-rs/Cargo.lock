@@ -1048,6 +1048,7 @@ dependencies = [
  "bytes",
  "chrono",
  "crc32fast",
+ "cron 0.11.0",
  "cronscheduler",
  "fastcdc",
  "flate2",
@@ -1798,6 +1799,17 @@ name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
+name = "cron"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d76219e9243e100d5a37676005f08379297f8addfebc247613299600625c734d"
+dependencies = [
+ "chrono",
+ "nom 7.1.3",
+ "once_cell",
+]
 
 [[package]]
 name = "cron"

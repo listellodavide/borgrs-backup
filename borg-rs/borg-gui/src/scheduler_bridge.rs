@@ -97,8 +97,8 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
         .map(|t| {
             let paths: Vec<slint::SharedString> =
                 t.paths_to_backup.into_iter().map(|p| p.into()).collect();
-            let tags: Vec<slint::SharedString> = t.tags.as_ref().map_or(vec![], |s| {
-                s.split(',').map(|tag| tag.trim().into()).collect()
+            let tags: Vec<slint::SharedString> = t.tags.as_ref().map_or(vec![], |vec| {
+                vec.iter().map(|tag| slint::SharedString::from(tag.as_str())).collect()
             });
             super::ScheduledTask {
                 task_name: t.task_name.into(),
@@ -211,9 +211,9 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                                 let _ = slint::invoke_from_event_loop(move || {
                                     if let Some(w) = window_weak2.upgrade() {
                                         let archive_names: Vec<slint::SharedString> = archive_list
-                                            .into_iter()
-                                            .map(|name| name.into())
-                                            .collect();
+                                             .into_iter()
+                                             .map(|name| name.into())
+                                             .collect();
 
                                         let scheduler = w.global::<SchedulerLogic>();
                                         let names_model =
@@ -444,24 +444,24 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                         comment: None,
                         tags: None,
                         schedule_type: match schedule_type_index {
-                            0 => "Daily".to_string(),
-                            1 => "Weekly".to_string(),
-                            2 => "Monthly".to_string(),
-                            _ => "Manual".to_string(),
-                        },
+                             0 => "Daily".to_string(),
+                             1 => "Weekly".to_string(),
+                             2 => "Monthly".to_string(),
+                             _ => "Manual".to_string(),
+                         },
                         weekday,
                         day_of_month,
                         hour,
                         minute,
                         run_on_boot_if_missed: run_on_boot,
-                        execution_count,
+                        execution_count: execution_count as u32,
                         active: is_active,
                         last_run: if last_run == "Never" {
                             None
                         } else {
                             Some(last_run.to_string())
                         },
-                    };
+                     };
 
                     println!(
                         "Saving task: {} with {} paths",
@@ -485,6 +485,7 @@ pub fn init_scheduler_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>
                                 let slint_paths: Vec<slint::SharedString> =
                                     paths.into_iter().map(|p| p.into()).collect();
                                 tasks[index] = super::ScheduledTask {
+                                    repo_type: repo_type.into(),
                                     task_name: task_name.into(),
                                     repo_name: repo_name.into(),
                                     repo_path: repo_path.into(),

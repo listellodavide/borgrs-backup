@@ -220,13 +220,13 @@ impl SchedulerReporter for GuiSchedulerReporter {
             move || {
                 if let Some(window) = window_weak.upgrade() {
                     let dash = window.global::<DashboardLogic>();
-                    let mut files: Vec<slint::SharedString> =
-                        dash.get_processed_files().iter().cloned().collect();
+                    // ModelIterator yields SharedString by value
+                    let mut files: Vec<slint::SharedString> = dash.get_processed_files().iter().collect();
                     files.insert(0, file.into());
                     if files.len() > 50 {
                         files.truncate(50);
                     }
-                    dash.set_processed_files(slint::VecModel::from(files).into());
+                    dash.set_processed_files(std::rc::Rc::new(slint::VecModel::from(files)).into());
                 }
             }
         });
@@ -396,10 +396,7 @@ async fn main() -> anyhow::Result<()> {
                     paths_to_backup: task.paths_to_backup.clone(),
                     compression: task.compression.clone(),
                     comment: task.comment.clone(),
-                    tags: task
-                        .tags
-                        .as_ref()
-                        .map(|t| t.split(',').map(|s| s.trim().to_string()).collect()),
+                    tags: task.tags.clone(),
                     schedule: CoreBackupSchedule {
                         schedule_type: match task.schedule_type.as_str() {
                             "Daily" => CoreScheduleType::Daily,
@@ -446,10 +443,7 @@ async fn main() -> anyhow::Result<()> {
                     paths_to_backup: task.paths_to_backup.clone(),
                     compression: task.compression.clone(),
                     comment: task.comment.clone(),
-                    tags: task
-                        .tags
-                        .as_ref()
-                        .map(|t| t.split(',').map(|s| s.trim().to_string()).collect()),
+                    tags: task.tags.clone(),
                     schedule: CoreBackupSchedule {
                         schedule_type: match task.schedule_type.as_str() {
                             "Daily" => CoreScheduleType::Daily,

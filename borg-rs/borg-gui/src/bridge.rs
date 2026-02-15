@@ -52,12 +52,14 @@ impl BackupProgress for GuiBackupProgress {
                 window.global::<AppState>().set_progress(progress);
                 if let Some(file) = file_opt {
                     let dash = window.global::<DashboardLogic>();
-                    let mut files: Vec<slint::SharedString> = dash.get_processed_files().iter().cloned().collect();
+                    // ModelIterator yields SharedString by value, so just collect()
+                    let mut files: Vec<slint::SharedString> = dash.get_processed_files().iter().collect();
                     files.insert(0, file.into());
                     if files.len() > 50 {
                         files.truncate(50);
                     }
-                    dash.set_processed_files(slint::VecModel::from(files).into());
+                    // VecModel doesn't implement Into<ModelRc<_>> directly, wrap in Rc
+                    dash.set_processed_files(std::rc::Rc::new(slint::VecModel::from(files)).into());
                 }
             }
         });
@@ -902,8 +904,12 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 tokio::spawn(async move {
                     // Check if name already exists
                     let exists = {
-                        let s = state_arc.lock().unwrap();
-                        if let Some(db) = &s.db {
+                        // Avoid holding the MutexGuard across an await: clone the DB handle first
+                        let db_opt = {
+                            let s = state_arc.lock().unwrap();
+                            s.db.clone()
+                        };
+                        if let Some(db) = db_opt {
                             db.repo_name_exists(&repo_name).await.unwrap_or(false)
                         } else {
                             false
