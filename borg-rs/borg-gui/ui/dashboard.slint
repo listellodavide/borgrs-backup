@@ -4,18 +4,18 @@ import { Theme, CyberButton } from "theme.slint";
 
 component ToolIcon inherits Rectangle {
     in property <image> icon;
-    in property <bool> active;
+    in property <string> name;
     callback clicked <=> touch.clicked;
 
     height: 40px;
     width: 40px;
-    background: active ? Theme.surface : transparent;
+    background: DashboardLogic.backup_type == name ? Theme.surface : transparent;
 
     Rectangle {
         x: 0;
         width: 3px;
         height: parent.height;
-        background: root.active ? Theme.primary : transparent;
+        background: DashboardLogic.backup_type == name ? Theme.primary : transparent;
     }
 
     touch := TouchArea {}
@@ -24,7 +24,7 @@ component ToolIcon inherits Rectangle {
         source: root.icon;
         width: 18px;
         height: 18px;
-        colorize: active ? Theme.text : Theme.text-muted;
+        colorize: DashboardLogic.backup_type == name ? Theme.primary : Theme.text-muted;
     }
 }
 
@@ -64,12 +64,29 @@ export component DashboardView inherits Rectangle {
 
                 VerticalLayout {
                     padding-top: 10px;
-                    ToolIcon { icon: @image-url("../assets/folder.svg"); active: true; }
-                    ToolIcon { icon: @image-url("../assets/cloud.svg"); active: false; }
-                    ToolIcon { icon: @image-url("../assets/monitor.svg"); active: false; }
+                    ToolIcon { 
+                        icon: @image-url("../assets/folder.svg"); 
+                        name: "folder";
+                        clicked => { DashboardLogic.backup_type_selected("folder"); }
+                    }
+                    ToolIcon { 
+                        icon: @image-url("../assets/cloud.svg"); 
+                        name: "cloud";
+                        clicked => { DashboardLogic.backup_type_selected("cloud"); }
+                    }
+                    ToolIcon { 
+                        icon: @image-url("../assets/monitor.svg"); 
+                        name: "computer";
+                        clicked => { DashboardLogic.backup_type_selected("computer"); }
+                    }
+                    ToolIcon { 
+                        icon: @image-url("../assets/trash-2.svg"); 
+                        name: "delete";
+                        clicked => { DashboardLogic.backup_type_selected("delete"); }
+                    }
                     Rectangle {} // Spacer
-                    ToolIcon { icon: @image-url("../assets/save.svg"); active: false; }
-                    ToolIcon { icon: @image-url("../assets/clock.svg"); active: false; }
+                    ToolIcon { icon: @image-url("../assets/save.svg"); name: "save"; }
+                    ToolIcon { icon: @image-url("../assets/clock.svg"); name: "clock"; }
                 }
             }
 

@@ -71,6 +71,9 @@ export global DashboardLogic {
     in property <bool> has_pending_archive: false;
     in property <[string]> pending_archive_paths;
 
+    // Backup type selection (folder, cloud, computer, delete)
+    in-out property <string> backup_type: "folder";
+
     callback new_archive_clicked();
     callback backup_clicked();
     callback refresh_archives();
@@ -78,6 +81,7 @@ export global DashboardLogic {
     callback select_scheduled_tasks();
     callback open_restore(ArchiveEntry);
     callback archive_double_clicked(ArchiveEntry);
+    callback backup_type_selected(string);
 }
 
 export global NewArchiveWizardLogic {

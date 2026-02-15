@@ -1253,5 +1253,17 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
             }
         }
     });
+
+    // Handle backup type selection (folder, cloud, computer, delete)
+    dash.on_backup_type_selected({
+        let window_weak = window_weak.clone();
+        move |backup_type| {
+            if let Some(window) = window_weak.upgrade() {
+                println!("Backup type selected: {}", backup_type);
+                let dashboard = window.global::<DashboardLogic>();
+                dashboard.set_backup_type(backup_type);
+            }
+        }
+    });
 }
 
