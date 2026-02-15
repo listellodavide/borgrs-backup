@@ -35,14 +35,6 @@ export component MainWindow inherits Window {
             if (AppState.show_password_dialog) : PasswordDialog { z: 100; }
             if (ArchiveContentLogic.show_dialog) : ArchiveContentView { z: 90; }
             if (ArchiveFilesLogic.show_archive_files_dialog) : ArchiveFilesDialog { z: 110; }
-            
-            // Debug overlay to check if property is true
-            if (ArchiveFilesLogic.show_archive_files_dialog) : Text {
-                x: 0; y: 0;
-                text: "DIALOG ACTIVE";
-                color: red;
-                z: 200;
-            }
         }
     }
 }
