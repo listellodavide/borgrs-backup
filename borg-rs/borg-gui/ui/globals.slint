@@ -38,8 +38,9 @@ export global AppState {
     // Password Dialog State
     in-out property <bool> show_password_dialog: false;
     in-out property <string> password_dialog_message: "Please enter the repository passphrase:";
-    // Tracks which action should be retried after authentication ("" | "backup" | "restore")
+    // Tracks which action should be retried after authentication ("" | "backup" | "restore" | "save_scheduled_task")
     in-out property <string> pending_auth_action;
+    in-out property <string> pending_auth_repo_path;
     callback password_dialog_submitted(string);
     callback password_dialog_cancelled();
 }
@@ -60,6 +61,7 @@ export global DashboardLogic {
     in property <[ArchiveEntry]> archives;
     in property <string> terminal_text;
     in property <string> status_text;
+    in property <[string]> processed_files;
     in-out property <length> terminal_height: 200px;
     in-out property <bool> is_scheduled_tasks_active: false;
     in property <bool> is_scheduled_backup_running: false;
@@ -133,7 +135,13 @@ export struct BackupSchedule {
 export struct ScheduledTask {
     task_name: string,  // Auto-generated: repo_archive_frequency_hh_mm
     repo_name: string,
+    repo_path: string,  // Actual path to repository
+    repo_type: string,  // "local", "s3", "sftp"
     archive_name: string,
+    paths_to_backup: [string], // Paths to backup
+    compression: string,        // Compression algorithm
+    comment: string,            // Optional comment
+    tags: [string],             // Optional tags
     schedule: BackupSchedule,
     execution_count: int, // New: how many times this task has been executed
     active: bool,         // New: is the task active
@@ -147,6 +155,8 @@ export global SchedulerLogic {
     // For task creation/editing form
     in-out property <string> selected_task_name: "";
     in-out property <string> selected_task_repo_name: "";
+    in-out property <string> selected_task_repo_path: "";
+    in-out property <string> selected_task_repo_type: "local";
     in-out property <string> selected_task_archive_name: "";
     in-out property <int> selected_task_schedule_type_index: 0; // 0=Daily, 1=Weekly, 2=Monthly, 3=Manual
     in-out property <int> selected_task_weekday: 0;
@@ -172,6 +182,7 @@ export global SchedulerLogic {
     callback on_repo_selected(int);  // When user selects a repository
     callback generate_task_name();   // Generate unique task name
     callback on_selected_task_index_changed(int); // New: when a task is selected from the list
+    callback refresh_repositories();  // Refresh the list of available repositories
 }
 
 export global RestoreLogic {

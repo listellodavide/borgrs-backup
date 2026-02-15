@@ -302,6 +302,16 @@ export component DashboardView inherits Rectangle {
                         ScrollView {
                             VerticalLayout {
                                 padding: 10px;
+                                if (DashboardLogic.processed_files.length > 0) : VerticalLayout {
+                                    spacing: 2px;
+                                    for file in DashboardLogic.processed_files : Text {
+                                        text: "✓ " + file;
+                                        color: Theme.primary;
+                                        font-family: "JetBrains Mono";
+                                        font-size: 11px;
+                                    }
+                                    Rectangle { height: 10px; } // Spacer
+                                }
                                 Text {
                                     text: DashboardLogic.terminal_text;
                                     color: Theme.text;

@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use tracing::{debug, info, warn};
 
-use crate::DaemonState;
 use crate::notifications::{self, NotificationEvent, NotificationPayload};
+use crate::DaemonState;
+use borg_core::db::Database;
 
 /// Health monitor for the daemon
 pub struct HealthMonitor {
@@ -102,12 +103,9 @@ impl HealthMonitor {
                     state.get(&job.name).and_then(|s| s.last_run)
                 };
 
-                let reference = last_run.unwrap_or_else(|| now - chrono::Duration::minutes(threshold_minutes as i64));
-                let expected = scheduler.expected_runs(
-                    &job.name,
-                    reference,
-                    now,
-                );
+                let reference = last_run
+                    .unwrap_or_else(|| now - chrono::Duration::minutes(threshold_minutes as i64));
+                let expected = scheduler.expected_runs(&job.name, reference, now);
 
                 if expected.is_empty() {
                     continue;
@@ -115,7 +113,8 @@ impl HealthMonitor {
 
                 let overdue = now - expected.last().unwrap();
                 if overdue.num_minutes().abs() as u64 >= threshold_minutes {
-                    self.send_missed_alert(&job.name, expected.last().unwrap(), last_run).await;
+                    self.send_missed_alert(&job.name, expected.last().unwrap(), last_run)
+                        .await;
                 }
             }
         }
@@ -180,7 +179,9 @@ mod tests {
         };
 
         let (shutdown_tx, _) = broadcast::channel(1);
-        let state = Arc::new(crate::DaemonState::new(config, shutdown_tx));
+        let tmp_file = tempfile::NamedTempFile::new().unwrap();
+        let db = Arc::new(Database::new(tmp_file.path()).await.unwrap());
+        let state = Arc::new(crate::DaemonState::new(config, shutdown_tx, db));
         let monitor = HealthMonitor::new(state);
 
         monitor.write_heartbeat().await;
@@ -204,21 +205,28 @@ impl MetricsCollector {
         let mut output = String::new();
 
         // Running jobs gauge
-        output.push_str("# HELP borgd_running_jobs_total Number of currently running backup jobs\n");
+        output
+            .push_str("# HELP borgd_running_jobs_total Number of currently running backup jobs\n");
         output.push_str("# TYPE borgd_running_jobs_total gauge\n");
         output.push_str(&format!("borgd_running_jobs_total {}\n\n", running.len()));
 
         // Scheduled jobs gauge
         output.push_str("# HELP borgd_scheduled_jobs_total Number of scheduled backup jobs\n");
         output.push_str("# TYPE borgd_scheduled_jobs_total gauge\n");
-        output.push_str(&format!("borgd_scheduled_jobs_total {}\n\n", scheduled.len()));
+        output.push_str(&format!(
+            "borgd_scheduled_jobs_total {}\n\n",
+            scheduled.len()
+        ));
 
         // Per-job metrics
         output.push_str("# HELP borgd_job_enabled Whether a backup job is enabled\n");
         output.push_str("# TYPE borgd_job_enabled gauge\n");
         for (name, _, enabled) in &scheduled {
             let value = if *enabled { 1 } else { 0 };
-            output.push_str(&format!("borgd_job_enabled{{job=\"{}\"}} {}\n", name, value));
+            output.push_str(&format!(
+                "borgd_job_enabled{{job=\"{}\"}} {}\n",
+                name, value
+            ));
         }
 
         // Last success/failure timestamps (seconds since epoch)
@@ -230,7 +238,10 @@ impl MetricsCollector {
                 .and_then(|state| state.last_success)
                 .map(|t| t.timestamp())
                 .unwrap_or(0);
-            output.push_str(&format!("borgd_job_last_success{{job=\"{}\"}} {}\n", name, ts));
+            output.push_str(&format!(
+                "borgd_job_last_success{{job=\"{}\"}} {}\n",
+                name, ts
+            ));
         }
 
         output.push_str("\n# HELP borgd_job_last_failure Last failed run timestamp\n");
@@ -241,7 +252,10 @@ impl MetricsCollector {
                 .and_then(|state| state.last_failure)
                 .map(|t| t.timestamp())
                 .unwrap_or(0);
-            output.push_str(&format!("borgd_job_last_failure{{job=\"{}\"}} {}\n", name, ts));
+            output.push_str(&format!(
+                "borgd_job_last_failure{{job=\"{}\"}} {}\n",
+                name, ts
+            ));
         }
 
         output

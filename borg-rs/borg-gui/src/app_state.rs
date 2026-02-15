@@ -1,69 +1,10 @@
+pub use borg_core::db::{ArchiveBookmark, Database, RepoBookmark, ScheduledTask};
+pub use borg_core::scheduler::{BackupSchedule, ScheduleType};
 use keyring::Entry;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 const KEYRING_SERVICE: &str = "borg-gui";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RepoBookmark {
-    pub name: String,
-    pub path: String,
-    pub repo_type: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ArchiveBookmark {
-    pub repo_name: String,
-    pub repo_path: String,
-    pub compression: String,
-    pub redundancy: String,
-    pub use_custom_name: bool,
-    pub archive_name: Option<String>,
-    pub comment: Option<String>,
-    pub tags: Option<String>, // comma separated in UI
-    pub paths: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ScheduleType {
-    Daily,
-    Weekly,
-    Monthly,
-    Manual,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct BackupSchedule {
-    pub schedule_type: ScheduleType,
-    pub weekday: i32,      // 0 = Mon … 6 = Sun
-    pub day_of_month: i32, // 1-31 for monthly
-    pub hour: i32,
-    pub minute: i32,
-    pub run_on_boot_if_missed: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ScheduledTask {
-    pub task_name: String, // Auto-generated: repo_archive_frequency_hh_mm
-    pub repo_name: String,
-    pub archive_name: String,
-    pub schedule: BackupSchedule,
-    pub execution_count: i32,
-    #[serde(default = "default_active")]
-    pub active: bool,
-    #[serde(default = "default_last_run")]
-    pub last_run: String,
-}
-
-fn default_active() -> bool {
-    true
-}
-
-fn default_last_run() -> String {
-    "Never".to_string()
-}
 
 #[derive(Debug, Default)]
 pub struct BorgAppState {
@@ -75,112 +16,155 @@ pub struct BorgAppState {
     pub scheduled_tasks: Vec<ScheduledTask>,
 
     pub archive_cache: Option<(String, Vec<crate::commands::FileEntry>)>,
+    pub db: Option<Arc<Database>>,
+    pub auth_oneshot: Option<tokio::sync::oneshot::Sender<String>>,
+    pub auth_retry_count: u32,
 }
 
 impl BorgAppState {
     pub fn new() -> Self {
-        let mut state = Self::default();
-        state.load_bookmarks();
-        state.load_archive_bookmarks();
-        state.load_scheduled_tasks();
-        state
+        Self::default()
     }
 
-    pub fn get_bookmarks_path() -> PathBuf {
-        let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-        path.pop();
-        path.push("repo_bookmarks.json");
-        path
+    pub fn set_db(&mut self, db: Arc<Database>) {
+        self.db = Some(db);
     }
 
-    pub fn get_archive_bookmarks_path() -> PathBuf {
-        let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-        path.pop();
-        path.push("archive_bookmarks.json");
-        path
-    }
-
-    pub fn get_scheduled_tasks_path() -> PathBuf {
-        let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-        path.pop();
-        path.push("scheduled_task.json");
-        path
-    }
-
-    pub fn load_bookmarks(&mut self) {
-        let path = Self::get_bookmarks_path();
-        if path.exists() {
-            if let Ok(content) = fs::read_to_string(path) {
-                if let Ok(bookmarks) = serde_json::from_str(&content) {
-                    self.bookmarks = bookmarks;
-                }
-            }
-        } else {
-            self.bookmarks = Vec::new();
-            let _ = self.save_bookmarks();
+    pub async fn load_all(&mut self) -> anyhow::Result<()> {
+        if let Some(db) = &self.db {
+            self.bookmarks = db.list_repos().await?;
+            self.archive_bookmarks = db.list_archive_bookmarks().await?;
+            self.scheduled_tasks = db.list_tasks().await?;
         }
-    }
-
-    pub fn save_bookmarks(&self) -> anyhow::Result<()> {
-        let path = Self::get_bookmarks_path();
-        let content = serde_json::to_string_pretty(&self.bookmarks)?;
-        fs::write(path, content)?;
         Ok(())
     }
 
-    pub fn load_archive_bookmarks(&mut self) {
-        let path = Self::get_archive_bookmarks_path();
-        if path.exists() {
-            if let Ok(content) = fs::read_to_string(path) {
-                if let Ok(bm) = serde_json::from_str(&content) {
-                    self.archive_bookmarks = bm;
-                    return;
-                }
+    pub async fn add_bookmark(
+        &mut self,
+        bookmark: RepoBookmark,
+        password: Option<String>,
+    ) -> anyhow::Result<()> {
+        if let Some(db) = &self.db {
+            db.add_repo(&bookmark).await?;
+            self.bookmarks = db.list_repos().await?;
+            if let Some(pwd) = password {
+                self.session_passwords
+                    .insert(bookmark.path.clone(), pwd.clone());
+                let _ = self.store_password(&bookmark.name, &pwd);
             }
         }
-        self.archive_bookmarks = Vec::new();
-        let _ = self.save_archive_bookmarks();
-    }
-
-    pub fn save_archive_bookmarks(&self) -> anyhow::Result<()> {
-        let path = Self::get_archive_bookmarks_path();
-        let content = serde_json::to_string_pretty(&self.archive_bookmarks)?;
-        fs::write(path, content)?;
         Ok(())
     }
 
-    pub fn load_scheduled_tasks(&mut self) {
-        let path = Self::get_scheduled_tasks_path();
-        if path.exists() {
-            if let Ok(content) = fs::read_to_string(path) {
-                if let Ok(tasks) = serde_json::from_str(&content) {
-                    self.scheduled_tasks = tasks;
-                }
-            }
-        } else {
-            self.scheduled_tasks = Vec::new();
-            let _ = self.save_scheduled_tasks();
+    pub async fn delete_bookmark(&mut self, name: &str) -> anyhow::Result<()> {
+        if let Some(db) = &self.db {
+            db.delete_repo(name).await?;
+            self.bookmarks = db.list_repos().await?;
         }
-    }
-
-    pub fn save_scheduled_tasks(&self) -> anyhow::Result<()> {
-        let path = Self::get_scheduled_tasks_path();
-        let content = serde_json::to_string_pretty(&self.scheduled_tasks)?;
-        fs::write(path, content)?;
         Ok(())
     }
 
-    pub fn upsert_archive_bookmark(&mut self, bookmark: ArchiveBookmark) {
-        if let Some(existing) = self
-            .archive_bookmarks
-            .iter_mut()
-            .find(|b| b.repo_path == bookmark.repo_path)
-        {
-            *existing = bookmark;
-        } else {
-            self.archive_bookmarks.push(bookmark);
+    pub async fn add_bookmark_async(
+        state: Arc<std::sync::Mutex<Self>>,
+        bookmark: RepoBookmark,
+        password: Option<String>,
+    ) -> anyhow::Result<()> {
+        let db = {
+            let s = state.lock().unwrap();
+            s.db.clone()
+        };
+
+        if let Some(db) = db {
+            db.add_repo(&bookmark).await?;
+            let repos = db.list_repos().await?;
+            let mut s = state.lock().unwrap();
+            s.bookmarks = repos;
+            if let Some(pwd) = password {
+                s.session_passwords
+                    .insert(bookmark.path.clone(), pwd.clone());
+                let _ = s.store_password(&bookmark.name, &pwd);
+            }
         }
-        let _ = self.save_archive_bookmarks();
+        Ok(())
+    }
+
+    pub async fn delete_bookmark_async(
+        state: Arc<std::sync::Mutex<Self>>,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        let db = {
+            let s = state.lock().unwrap();
+            s.db.clone()
+        };
+        if let Some(db) = db {
+            db.delete_repo(name).await?;
+            let repos = db.list_repos().await?;
+            let mut s = state.lock().unwrap();
+            s.bookmarks = repos;
+        }
+        Ok(())
+    }
+
+    pub async fn upsert_archive_bookmark_async(
+        state: Arc<std::sync::Mutex<Self>>,
+        bookmark: ArchiveBookmark,
+    ) -> anyhow::Result<()> {
+        let db = {
+            let s = state.lock().unwrap();
+            s.db.clone()
+        };
+        if let Some(db) = db {
+            db.upsert_archive_bookmark(&bookmark).await?;
+            let bookmarks = db.list_archive_bookmarks().await?;
+            let mut s = state.lock().unwrap();
+            s.archive_bookmarks = bookmarks;
+        }
+        Ok(())
+    }
+
+    pub async fn save_task_async(
+        state: Arc<std::sync::Mutex<Self>>,
+        task: ScheduledTask,
+    ) -> anyhow::Result<()> {
+        let db = {
+            let s = state.lock().unwrap();
+            s.db.clone()
+        };
+        if let Some(db) = db {
+            db.save_task(&task).await?;
+            let tasks = db.list_tasks().await?;
+            let mut s = state.lock().unwrap();
+            s.scheduled_tasks = tasks;
+        }
+        Ok(())
+    }
+
+    pub async fn delete_task_async(
+        state: Arc<std::sync::Mutex<Self>>,
+        id: i64,
+    ) -> anyhow::Result<()> {
+        let db = {
+            let s = state.lock().unwrap();
+            s.db.clone()
+        };
+        if let Some(db) = db {
+            db.delete_task(id).await?;
+            let tasks = db.list_tasks().await?;
+            let mut s = state.lock().unwrap();
+            s.scheduled_tasks = tasks;
+        }
+        Ok(())
+    }
+
+    pub async fn upsert_archive_bookmark(
+        &mut self,
+        bookmark: ArchiveBookmark,
+    ) -> anyhow::Result<()> {
+        if let Some(db) = &self.db {
+            db.upsert_archive_bookmark(&bookmark).await?;
+            self.archive_bookmarks = db.list_archive_bookmarks().await?;
+        }
+        Ok(())
     }
 
     pub fn get_archive_bookmark_for_repo(&self, repo_path: &str) -> Option<ArchiveBookmark> {
@@ -190,94 +174,33 @@ impl BorgAppState {
             .cloned()
     }
 
-    pub fn add_bookmark(&mut self, bookmark: RepoBookmark, password: Option<String>) {
-        if let Some(pwd) = password {
-            self.session_passwords
-                .insert(bookmark.path.clone(), pwd.clone());
-            let _ = self.store_password(&bookmark.path, &pwd);
+    pub async fn save_task(&mut self, task: ScheduledTask) -> anyhow::Result<()> {
+        if let Some(db) = &self.db {
+            db.save_task(&task).await?;
+            self.scheduled_tasks = db.list_tasks().await?;
         }
-        // Avoid duplicates by path
-        if !self.bookmarks.iter().any(|b| b.path == bookmark.path) {
-            self.bookmarks.push(bookmark);
-            let _ = self.save_bookmarks();
-        }
+        Ok(())
     }
 
-    pub fn store_password(&self, repo_path: &str, password: &str) -> anyhow::Result<()> {
-        let entry = Entry::new(KEYRING_SERVICE, repo_path)?;
+    pub async fn delete_task(&mut self, id: i64) -> anyhow::Result<()> {
+        if let Some(db) = &self.db {
+            db.delete_task(id).await?;
+            self.scheduled_tasks = db.list_tasks().await?;
+        }
+        Ok(())
+    }
+
+    pub fn store_password(&self, repo_name: &str, password: &str) -> anyhow::Result<()> {
+        let account = format!("borgrs_{}", repo_name);
+        let entry = Entry::new(KEYRING_SERVICE, &account)?;
         entry.set_password(password)?;
         Ok(())
     }
 
-    pub fn get_password(&self, repo_path: &str) -> anyhow::Result<String> {
-        let entry = Entry::new(KEYRING_SERVICE, repo_path)?;
+    pub fn get_password(&self, repo_name: &str) -> anyhow::Result<String> {
+        let account = format!("borgrs_{}", repo_name);
+        let entry = Entry::new(KEYRING_SERVICE, &account)?;
         let password = entry.get_password()?;
         Ok(password)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::tempdir;
-
-    fn save_scheduled_tasks_to_path(
-        tasks: &[ScheduledTask],
-        path: &std::path::Path,
-    ) -> anyhow::Result<()> {
-        let content = serde_json::to_string_pretty(tasks)?;
-        fs::write(path, content)?;
-        Ok(())
-    }
-
-    fn load_scheduled_tasks_from_path(path: &std::path::Path) -> Vec<ScheduledTask> {
-        if path.exists() {
-            if let Ok(content) = fs::read_to_string(path) {
-                if let Ok(tasks) = serde_json::from_str(&content) {
-                    return tasks;
-                }
-            }
-        }
-        Vec::new()
-    }
-
-    #[test]
-    fn test_scheduler_state_persistence() {
-        let dir = tempdir().unwrap();
-        let scheduled_tasks_path = dir.path().join("scheduled_task.json");
-
-        let tasks = vec![ScheduledTask {
-            task_name: "test_task_1".to_string(),
-            repo_name: "repo1".to_string(),
-            archive_name: "archive1".to_string(),
-            schedule: BackupSchedule {
-                schedule_type: ScheduleType::Daily,
-                weekday: 0,
-                day_of_month: 0,
-                hour: 1,
-                minute: 0,
-                run_on_boot_if_missed: true,
-            },
-            execution_count: 0,
-            active: true,
-            last_run: "Never".to_string(),
-        }];
-
-        let save_result = save_scheduled_tasks_to_path(&tasks, &scheduled_tasks_path);
-        assert!(save_result.is_ok());
-
-        let loaded_tasks = load_scheduled_tasks_from_path(&scheduled_tasks_path);
-
-        assert_eq!(loaded_tasks.len(), 1);
-        assert_eq!(loaded_tasks[0], tasks[0]);
-
-        // Test deletion
-        let updated_tasks = vec![];
-        let save_result = save_scheduled_tasks_to_path(&updated_tasks, &scheduled_tasks_path);
-        assert!(save_result.is_ok());
-
-        let final_tasks = load_scheduled_tasks_from_path(&scheduled_tasks_path);
-        assert!(final_tasks.is_empty());
     }
 }

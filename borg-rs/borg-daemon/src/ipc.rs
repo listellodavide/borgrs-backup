@@ -9,6 +9,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tracing::{debug, error, info, warn};
 
 use crate::DaemonState;
+use borg_core::db::Database;
 
 /// Control socket server for daemon management
 pub struct ControlServer {
@@ -36,8 +37,8 @@ impl ControlServer {
         }
 
         // Create Unix socket listener
-        let listener = UnixListener::bind(&self.socket_path)
-            .context("Failed to bind control socket")?;
+        let listener =
+            UnixListener::bind(&self.socket_path).context("Failed to bind control socket")?;
 
         // Set socket permissions (owner read/write only)
         #[cfg(unix)]
@@ -183,7 +184,7 @@ async fn handle_stop(state: &Arc<DaemonState>) -> String {
 
 async fn handle_reload(_state: &Arc<DaemonState>) -> String {
     info!("Reload command received via control socket");
-    
+
     // In a real implementation, we'd reload from the config file
     // For now, just acknowledge
     "Configuration reload initiated\n".to_string()
@@ -199,7 +200,8 @@ async fn handle_list_jobs(state: &Arc<DaemonState>) -> String {
 
     for job in &config.jobs {
         let status = if job.enabled { "enabled" } else { "disabled" };
-        let next_run = scheduler.list_scheduled()
+        let next_run = scheduler
+            .list_scheduled()
             .iter()
             .find(|(name, _, _)| name == &job.name)
             .map(|(_, time, _)| time.to_string())
@@ -212,8 +214,10 @@ async fn handle_list_jobs(state: &Arc<DaemonState>) -> String {
         response.push_str(&format!("  Repository: {}\n", job.repository));
         response.push_str(&format!("  Paths: {:?}\n", job.paths));
         if !job.exclude_patterns.is_empty() {
-            response.push_str(&format!("  Exclusions: {} patterns\n", 
-                job.exclude_patterns.len()));
+            response.push_str(&format!(
+                "  Exclusions: {} patterns\n",
+                job.exclude_patterns.len()
+            ));
         }
         response.push('\n');
     }
@@ -223,7 +227,7 @@ async fn handle_list_jobs(state: &Arc<DaemonState>) -> String {
 
 async fn handle_run_job(job_name: &str, state: &Arc<DaemonState>) -> String {
     let mut scheduler = state.scheduler.write().await;
-    
+
     if scheduler.schedule_now(job_name) {
         info!("Manual job run requested: {}", job_name);
         format!("Job '{}' scheduled for immediate execution\n", job_name)
@@ -268,12 +272,15 @@ async fn handle_health(state: &Arc<DaemonState>) -> String {
     let running = state.running_jobs.read().await;
     let job_state = state.job_state.read().await;
     let scheduler = state.scheduler.read().await;
-    
+
     let mut response = String::new();
     response.push_str("{\n");
     response.push_str("  \"status\": \"healthy\",\n");
     response.push_str(&format!("  \"running_jobs\": {},\n", running.len()));
-    response.push_str(&format!("  \"scheduled_jobs\": {},\n", scheduler.list_scheduled().len()));
+    response.push_str(&format!(
+        "  \"scheduled_jobs\": {},\n",
+        scheduler.list_scheduled().len()
+    ));
     response.push_str("  \"jobs\": [\n");
     for (index, (name, next_run, _)) in scheduler.list_scheduled().iter().enumerate() {
         let state = job_state.get(name);
@@ -286,7 +293,11 @@ async fn handle_health(state: &Arc<DaemonState>) -> String {
             .map(|t| t.to_rfc3339())
             .unwrap_or_else(|| "null".to_string());
         let failures = state.map(|s| s.consecutive_failures).unwrap_or(0);
-        let separator = if index + 1 == scheduler.list_scheduled().len() { "" } else { "," };
+        let separator = if index + 1 == scheduler.list_scheduled().len() {
+            ""
+        } else {
+            ","
+        };
         response.push_str(&format!(
             "    {{ \"name\": \"{}\", \"next_run\": \"{}\", \"last_success\": \"{}\", \"last_failure\": \"{}\", \"consecutive_failures\": {} }}{}\n",
             name,
@@ -340,7 +351,9 @@ mod tests {
             repositories: vec![],
         };
         let (shutdown_tx, _) = broadcast::channel(1);
-        Arc::new(DaemonState::new(config, shutdown_tx))
+        let tmp_file = tempfile::NamedTempFile::new().unwrap();
+        let db = Arc::new(Database::new(tmp_file.path()).await.unwrap());
+        Arc::new(DaemonState::new(config, shutdown_tx, db))
     }
 
     #[tokio::test]

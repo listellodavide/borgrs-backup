@@ -1,7 +1,7 @@
 //! Job scheduler with cron-based scheduling
 
-use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 use chrono::{DateTime, Utc};
 use cron::Schedule;
@@ -16,7 +16,9 @@ struct ScheduledJob {
     next_run: DateTime<Utc>,
     schedule: Schedule,
     priority: u32,
+    #[allow(dead_code)]
     last_scheduled: Option<DateTime<Utc>>,
+    #[allow(dead_code)]
     last_success: Option<DateTime<Utc>>,
     missed_runs: u32,
 }
@@ -124,7 +126,7 @@ impl Scheduler {
     pub fn job_completed(&mut self, job_name: &str) {
         // Remove the completed job from the heap
         let jobs: Vec<_> = self.jobs.drain().collect();
-        
+
         for job in jobs {
             if job.name == job_name {
                 // Reschedule this job
@@ -150,14 +152,14 @@ impl Scheduler {
     /// Mark a job as failed (for missed runs detection)
     pub fn job_failed(&mut self, job_name: &str) {
         let jobs: Vec<_> = self.jobs.drain().collect();
-        
+
         for job in jobs {
             if job.name == job_name {
                 // Increment missed runs counter
                 let mut updated_job = job;
                 updated_job.missed_runs += 1;
                 updated_job.last_scheduled = Some(Utc::now());
-                
+
                 // Reschedule this job
                 if let Some(next_run) = updated_job.schedule.upcoming(Utc).next() {
                     debug!("Rescheduled failed job '{}' for {}", job_name, next_run);
@@ -171,6 +173,7 @@ impl Scheduler {
     }
 
     /// Update job configurations and reschedule
+    #[allow(dead_code)]
     pub fn update_jobs(&mut self, jobs: Vec<BackupJob>) {
         self.job_configs = jobs;
         self.schedule_all_jobs();
@@ -178,21 +181,26 @@ impl Scheduler {
 
     /// Get all scheduled jobs with their next run times
     pub fn list_scheduled(&self) -> Vec<(String, DateTime<Utc>, bool)> {
-        let mut result: Vec<_> = self.jobs.iter()
+        let mut result: Vec<_> = self
+            .jobs
+            .iter()
             .map(|job| {
-                let enabled = self.job_configs.iter()
+                let enabled = self
+                    .job_configs
+                    .iter()
                     .find(|j| j.name == job.name)
                     .map(|j| j.enabled)
                     .unwrap_or(false);
                 (job.name.clone(), job.next_run, enabled)
             })
             .collect();
-        
+
         result.sort_by(|a, b| a.1.cmp(&b.1));
         result
     }
 
     /// Force immediate scheduling of a specific job
+    #[allow(dead_code)]
     pub fn schedule_now(&mut self, job_name: &str) -> bool {
         if let Some(job_config) = self.job_configs.iter().find(|j| j.name == job_name) {
             if let Ok(schedule) = job_config.schedule.parse::<Schedule>() {
@@ -212,16 +220,19 @@ impl Scheduler {
     }
 
     /// Check if a job is currently scheduled
+    #[allow(dead_code)]
     pub fn is_scheduled(&self, job_name: &str) -> bool {
         self.jobs.iter().any(|job| job.name == job_name)
     }
 
     /// Get job configuration by name
+    #[allow(dead_code)]
     pub fn get_job_config(&self, job_name: &str) -> Option<&BackupJob> {
         self.job_configs.iter().find(|j| j.name == job_name)
     }
 
     /// Get the next expected run time for a job
+    #[allow(dead_code)]
     pub fn next_expected_run(&self, job_name: &str) -> Option<DateTime<Utc>> {
         self.jobs
             .iter()
@@ -230,6 +241,7 @@ impl Scheduler {
     }
 
     /// Check if a job has missed runs (based on threshold)
+    #[allow(dead_code)]
     pub fn has_missed_runs(&self, job_name: &str, max_missed: u32) -> bool {
         self.jobs
             .iter()
@@ -239,6 +251,7 @@ impl Scheduler {
     }
 
     /// Get last success time for a job
+    #[allow(dead_code)]
     pub fn last_success_time(&self, job_name: &str) -> Option<DateTime<Utc>> {
         self.jobs
             .iter()
@@ -248,6 +261,7 @@ impl Scheduler {
     }
 
     /// Get missed runs count for a job
+    #[allow(dead_code)]
     pub fn missed_runs_count(&self, job_name: &str) -> u32 {
         self.jobs
             .iter()
@@ -309,20 +323,18 @@ mod tests {
 
         let scheduler = Scheduler::new(jobs);
         let scheduled = scheduler.list_scheduled();
-        
+
         // Both jobs have same schedule, but high-priority should be ordered first
         assert_eq!(scheduled.len(), 2);
     }
 
     #[test]
     fn test_schedule_now() {
-        let jobs = vec![
-            create_test_job("daily", "0 0 2 * * *", 100),
-        ];
+        let jobs = vec![create_test_job("daily", "0 0 2 * * *", 100)];
 
         let mut scheduler = Scheduler::new(jobs);
         assert!(scheduler.schedule_now("daily"));
-        
+
         let (name, time) = scheduler.next_job().unwrap();
         assert_eq!(name, "daily");
         // Job should be scheduled very close to now
@@ -344,13 +356,13 @@ mod tests {
     fn test_job_completion_tracking() {
         let jobs = vec![create_test_job("daily", "0 0 2 * * *", 100)];
         let mut scheduler = Scheduler::new(jobs);
-        
+
         // Initially no last success
         assert_eq!(scheduler.last_success_time("daily"), None);
-        
+
         // Mark job as completed
         scheduler.job_completed("daily");
-        
+
         // Should now have a last success time
         assert!(scheduler.last_success_time("daily").is_some());
     }
@@ -359,13 +371,13 @@ mod tests {
     fn test_missed_runs_tracking() {
         let jobs = vec![create_test_job("daily", "0 0 2 * * *", 100)];
         let mut scheduler = Scheduler::new(jobs);
-        
+
         // Initially no missed runs
         assert_eq!(scheduler.missed_runs_count("daily"), 0);
-        
+
         // Mark job as failed
         scheduler.job_failed("daily");
-        
+
         // Should now have one missed run
         assert_eq!(scheduler.missed_runs_count("daily"), 1);
     }

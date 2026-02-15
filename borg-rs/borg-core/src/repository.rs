@@ -6,19 +6,19 @@
 //! - No global locks, no renames
 
 use crate::chunker::{Chunk, ChunkId};
-use crate::compression::{CompressedData, Compressor, CompressionConfig};
+use crate::compression::{CompressedData, CompressionConfig, Compressor};
 use crate::crypto::{CryptoProvider, EncryptedData, RepositoryKey};
 use crate::error::{BorgError, Result};
-use crate::metadata::{Snapshot, Tree, EntryKind, RepositoryStats};
+use crate::metadata::{EntryKind, RepositoryStats, Snapshot, Tree};
 use crate::recovery::{RecoveryCodec, RecoveryProfile};
 use async_trait::async_trait;
 use futures_util::{StreamExt, TryStreamExt};
+use hex;
 use opendal::Operator;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, instrument, warn};
-use hex;
 
 use crate::archive::{ArchiveCreator, BackupProgress};
 
@@ -149,30 +149,42 @@ impl StorageEngine for ObjectLogV1 {
     async fn init(&self, descriptor: &RepoDescriptor) -> Result<()> {
         let data = serde_json::to_vec_pretty(descriptor)
             .map_err(|e| BorgError::Serialization(e.to_string()))?;
-        self.op.write("repo.json", data).await
+        self.op
+            .write("repo.json", data)
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))?;
         Ok(())
     }
 
     async fn load_descriptor(&self) -> Result<RepoDescriptor> {
-        let data = self.op.read("repo.json").await
+        let data = self
+            .op
+            .read("repo.json")
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))?;
         serde_json::from_slice(&data.to_vec())
             .map_err(|e| BorgError::Deserialization(e.to_string()))
     }
 
     async fn has_object(&self, id: &ChunkId) -> Result<bool> {
-        self.op.exists(&self.object_path(id)).await
+        self.op
+            .exists(&self.object_path(id))
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))
     }
 
     async fn put_object(&self, id: &ChunkId, data: &[u8]) -> Result<()> {
-        self.op.write(&self.object_path(id), data.to_vec()).await
+        self.op
+            .write(&self.object_path(id), data.to_vec())
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))
     }
 
     async fn get_object(&self, id: &ChunkId) -> Result<Vec<u8>> {
-        let data = self.op.read(&self.object_path(id)).await
+        let data = self
+            .op
+            .read(&self.object_path(id))
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))?;
         Ok(data.to_vec())
     }
@@ -181,22 +193,30 @@ impl StorageEngine for ObjectLogV1 {
         let path = format!("snapshots/{}.json", snapshot.id);
         let data = serde_json::to_vec_pretty(snapshot)
             .map_err(|e| BorgError::Serialization(e.to_string()))?;
-        self.op.write(&path, data).await
+        self.op
+            .write(&path, data)
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))
     }
 
     async fn list_snapshots(&self) -> Result<Vec<Snapshot>> {
-        let entries = self.op.list("snapshots/").await
+        let entries = self
+            .op
+            .list("snapshots/")
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))?;
 
         let op = self.op.clone();
-        
-        let futures = entries.into_iter()
+
+        let futures = entries
+            .into_iter()
             .filter(|e| e.path().ends_with(".json"))
             .map(|entry| {
                 let op = op.clone();
                 async move {
-                    let data = op.read(entry.path()).await
+                    let data = op
+                        .read(entry.path())
+                        .await
                         .map_err(|e| BorgError::Repository(e.to_string()))?;
                     let snap: Snapshot = serde_json::from_slice(&data.to_vec())
                         .map_err(|e| BorgError::Deserialization(e.to_string()))?;
@@ -223,10 +243,18 @@ impl StorageEngine for ObjectLogV1 {
 
     async fn list_objects(&self) -> Result<Vec<ChunkId>> {
         let mut chunks = Vec::new();
-        let mut lister = self.op.lister_with("objects/").recursive(true).await
+        let mut lister = self
+            .op
+            .lister_with("objects/")
+            .recursive(true)
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))?;
-        
-        while let Some(entry) = lister.try_next().await.map_err(|e| BorgError::Repository(e.to_string()))? {
+
+        while let Some(entry) = lister
+            .try_next()
+            .await
+            .map_err(|e| BorgError::Repository(e.to_string()))?
+        {
             if entry.metadata().mode().is_file() {
                 if let Some(id) = self.parse_id_from_path(entry.path()) {
                     chunks.push(id);
@@ -237,23 +265,32 @@ impl StorageEngine for ObjectLogV1 {
     }
 
     async fn delete_object(&self, id: &ChunkId) -> Result<()> {
-        self.op.delete(&self.object_path(id)).await
+        self.op
+            .delete(&self.object_path(id))
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))
     }
 
     async fn delete_snapshot(&self, id: &str) -> Result<()> {
         let path = format!("snapshots/{}.json", id);
-        self.op.delete(&path).await
+        self.op
+            .delete(&path)
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))
     }
 
     async fn put_recovery(&self, id: &ChunkId, data: &[u8]) -> Result<()> {
-        self.op.write(&self.recovery_path(id), data.to_vec()).await
+        self.op
+            .write(&self.recovery_path(id), data.to_vec())
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))
     }
 
     async fn get_recovery(&self, id: &ChunkId) -> Result<Vec<u8>> {
-        let data = self.op.read(&self.recovery_path(id)).await
+        let data = self
+            .op
+            .read(&self.recovery_path(id))
+            .await
             .map_err(|e| BorgError::Repository(e.to_string()))?;
         Ok(data.to_vec())
     }
@@ -271,27 +308,40 @@ pub struct Repository {
 
 impl Repository {
     #[instrument(skip(passphrase))]
-    pub async fn init(op: Operator, path: String, passphrase: Option<&str>, descriptor: Option<RepoDescriptor>) -> Result<Self> {
-        if op.exists("repo.json").await.map_err(|e| BorgError::Repository(e.to_string()))? {
+    pub async fn init(
+        op: Operator,
+        path: String,
+        passphrase: Option<&str>,
+        descriptor: Option<RepoDescriptor>,
+    ) -> Result<Self> {
+        if op
+            .exists("repo.json")
+            .await
+            .map_err(|e| BorgError::Repository(e.to_string()))?
+        {
             return Err(BorgError::RepositoryExists { path });
         }
 
         let descriptor = descriptor.unwrap_or_default();
         let engine = Box::new(ObjectLogV1::new(op.clone()));
-        
+
         info!("Initializing new repository at {}", path);
         engine.init(&descriptor).await?;
 
         let crypto = if descriptor.encrypted {
             let passphrase = passphrase.ok_or_else(|| {
-                BorgError::InvalidArgument("Passphrase required for encrypted repository".to_string())
+                BorgError::InvalidArgument(
+                    "Passphrase required for encrypted repository".to_string(),
+                )
             })?;
 
             let (repo_key, enc_key) = RepositoryKey::create(passphrase)?;
             let key_data = serde_json::to_string_pretty(&repo_key)
                 .map_err(|e| BorgError::Serialization(e.to_string()))?;
-            
-            op.write("key", key_data).await.map_err(|e| BorgError::Repository(e.to_string()))?;
+
+            op.write("key", key_data)
+                .await
+                .map_err(|e| BorgError::Repository(e.to_string()))?;
 
             Some(CryptoProvider::new(enc_key))
         } else {
@@ -320,7 +370,11 @@ impl Repository {
 
     #[instrument(skip(passphrase))]
     pub async fn open(op: Operator, path: String, passphrase: Option<&str>) -> Result<Self> {
-        if !op.exists("repo.json").await.map_err(|e| BorgError::Repository(e.to_string()))? {
+        if !op
+            .exists("repo.json")
+            .await
+            .map_err(|e| BorgError::Repository(e.to_string()))?
+        {
             return Err(BorgError::RepositoryNotFound { path });
         }
 
@@ -332,7 +386,10 @@ impl Repository {
         let crypto = if descriptor.encrypted {
             let passphrase = passphrase.ok_or(BorgError::InvalidPassphrase)?;
 
-            let key_data = op.read("key").await.map_err(|e| BorgError::Repository(e.to_string()))?;
+            let key_data = op
+                .read("key")
+                .await
+                .map_err(|e| BorgError::Repository(e.to_string()))?;
             let repo_key: RepositoryKey = serde_json::from_slice(&key_data.to_vec())
                 .map_err(|e| BorgError::Deserialization(e.to_string()))?;
 
@@ -385,13 +442,13 @@ impl Repository {
         let compressed = self.compressor.compress(&chunk.data)?;
 
         let data_to_store = if let Some(ref crypto) = self.crypto {
-            let encrypted = crypto.encrypt(&bincode::serialize(&compressed)
-                .map_err(|e| BorgError::Serialization(e.to_string()))?)?;
-            bincode::serialize(&encrypted)
-                .map_err(|e| BorgError::Serialization(e.to_string()))?
+            let encrypted = crypto.encrypt(
+                &bincode::serialize(&compressed)
+                    .map_err(|e| BorgError::Serialization(e.to_string()))?,
+            )?;
+            bincode::serialize(&encrypted).map_err(|e| BorgError::Serialization(e.to_string()))?
         } else {
-            bincode::serialize(&compressed)
-                .map_err(|e| BorgError::Serialization(e.to_string()))?
+            bincode::serialize(&compressed).map_err(|e| BorgError::Serialization(e.to_string()))?
         };
 
         self.engine.put_object(&chunk.id, &data_to_store).await?;
@@ -453,15 +510,15 @@ impl Repository {
                 };
 
                 let data = self.compressor.decompress(&compressed)?;
-                
+
                 let computed_id = ChunkId::from_data(&data);
                 if computed_id != *id {
-                     return Err(BorgError::IntegrityCheck {
+                    return Err(BorgError::IntegrityCheck {
                         expected: id.to_hex(),
                         actual: computed_id.to_hex(),
                     });
                 }
-                
+
                 info!("Chunk {} successfully recovered", id);
                 return Ok(Chunk {
                     id: id.clone(),
@@ -494,24 +551,28 @@ impl Repository {
         compression: &str,
         comment: Option<&str>,
         tags: Option<&[String]>,
-        progress_callback: impl Fn(u64, u64) + Send + Sync + 'static,
+        progress_callback: impl Fn(u64, u64, Option<&str>) + Send + Sync + 'static,
     ) -> Result<String> {
-        info!("Creating archive '{}' with compression '{}'", name, compression);
+        info!(
+            "Creating archive '{}' with compression '{}'",
+            name, compression
+        );
 
         // Adapter for progress callback
         struct ProgressAdapter<F>(F)
         where
-            F: Fn(u64, u64) + Send + Sync;
+            F: Fn(u64, u64, Option<&str>) + Send + Sync;
 
         impl<F> BackupProgress for ProgressAdapter<F>
         where
-            F: Fn(u64, u64) + Send + Sync,
+            F: Fn(u64, u64, Option<&str>) + Send + Sync,
         {
             fn on_file_start(&self, _path: &Path) {}
             fn on_file_complete(&self, _path: &Path, _size: u64, _chunks: usize) {}
             fn on_file_skipped(&self, _path: &Path, _reason: &str) {}
-            fn on_progress(&self, processed: u64, total: u64) {
-                (self.0)(processed, total);
+            /// Called periodically with overall progress
+            fn on_progress(&self, processed: u64, total: u64, current_file: Option<&str>) {
+                (self.0)(processed, total, current_file);
             }
             fn on_error(&self, path: &Path, error: &str) {
                 warn!("Error processing {}: {}", path.display(), error);
@@ -574,8 +635,8 @@ impl Repository {
     }
 
     pub async fn commit_archive(&mut self, archive: crate::archive::Archive) -> Result<()> {
-        let archive_data = bincode::serialize(&archive)
-            .map_err(|e| BorgError::Serialization(e.to_string()))?;
+        let archive_data =
+            bincode::serialize(&archive).map_err(|e| BorgError::Serialization(e.to_string()))?;
         let archive_chunk = Chunk::new(archive_data);
         let archive_id = archive_chunk.id.clone();
 
@@ -599,15 +660,18 @@ impl Repository {
     pub async fn load_manifest(&self) -> Result<Manifest> {
         let snapshots = self.engine.list_snapshots().await?;
 
-        let archives = snapshots.into_iter().map(|s| ArchiveRef {
-            name: s.name,
-            id: s.root_tree,
-            time: s.time,
-            hostname: s.hostname,
-            username: s.username,
-            comment: s.comment,
-            tags: s.tags,
-        }).collect();
+        let archives = snapshots
+            .into_iter()
+            .map(|s| ArchiveRef {
+                name: s.name,
+                id: s.root_tree,
+                time: s.time,
+                hostname: s.hostname,
+                username: s.username,
+                comment: s.comment,
+                tags: s.tags,
+            })
+            .collect();
 
         Ok(Manifest {
             version: 1,
@@ -621,7 +685,9 @@ impl Repository {
         if let Some(snapshot) = snapshots.iter().find(|s| s.name == name) {
             self.engine.delete_snapshot(&snapshot.id).await
         } else {
-            Err(BorgError::ArchiveNotFound { name: name.to_string() })
+            Err(BorgError::ArchiveNotFound {
+                name: name.to_string(),
+            })
         }
     }
 
@@ -632,8 +698,7 @@ impl Repository {
     }
 
     pub async fn put_tree(&mut self, tree: &Tree) -> Result<ChunkId> {
-        let data = serde_json::to_vec(tree)
-            .map_err(|e| BorgError::Serialization(e.to_string()))?;
+        let data = serde_json::to_vec(tree).map_err(|e| BorgError::Serialization(e.to_string()))?;
         let chunk = Chunk::new(data);
         let id = chunk.id.clone();
         self.put_chunk(&chunk).await?;
@@ -646,7 +711,7 @@ impl Repository {
 
         let mut reachable = HashSet::new();
         let snapshots = self.engine.list_snapshots().await?;
-        
+
         info!("Scanning {} snapshots...", snapshots.len());
         for snap in &snapshots {
             debug!("Traversing snapshot {}", snap.id);
@@ -666,7 +731,7 @@ impl Repository {
         }
 
         info!("GC Complete. Deleted {} objects.", deleted_count);
-        
+
         Ok(RepositoryStats {
             total_chunks: (total_objects - deleted_count) as u64,
             total_size: 0,
@@ -674,7 +739,11 @@ impl Repository {
         })
     }
 
-    async fn traverse_tree(&self, root_id: &ChunkId, reachable: &mut HashSet<ChunkId>) -> Result<()> {
+    async fn traverse_tree(
+        &self,
+        root_id: &ChunkId,
+        reachable: &mut HashSet<ChunkId>,
+    ) -> Result<()> {
         let mut stack = VecDeque::new();
         stack.push_back(root_id.clone());
 
@@ -730,11 +799,22 @@ mod uuid {
         pub fn to_string(&self) -> String {
             format!(
                 "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-                self.0[0], self.0[1], self.0[2], self.0[3],
-                self.0[4], self.0[5],
-                self.0[6], self.0[7],
-                self.0[8], self.0[9],
-                self.0[10], self.0[11], self.0[12], self.0[13], self.0[14], self.0[15]
+                self.0[0],
+                self.0[1],
+                self.0[2],
+                self.0[3],
+                self.0[4],
+                self.0[5],
+                self.0[6],
+                self.0[7],
+                self.0[8],
+                self.0[9],
+                self.0[10],
+                self.0[11],
+                self.0[12],
+                self.0[13],
+                self.0[14],
+                self.0[15]
             )
         }
     }
@@ -743,9 +823,9 @@ mod uuid {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-    use crate::storage::{StorageConfig, build_operator};
     use crate::chunker::Chunk;
+    use crate::storage::{StorageConfig, build_operator};
+    use tempfile::TempDir;
 
     async fn get_test_op(temp_dir: &TempDir) -> Operator {
         let repo_path = temp_dir.path().join("test-repo");
@@ -757,12 +837,21 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let op = get_test_op(&temp_dir).await;
 
-        let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("test-passphrase"), None).await.expect("Init failed");
+        let mut repo = Repository::init(
+            op.clone(),
+            "test-repo".to_string(),
+            Some("test-passphrase"),
+            None,
+        )
+        .await
+        .expect("Init failed");
 
         let chunk = Chunk::new(b"test data".to_vec());
         repo.put_chunk(&chunk).await.unwrap();
 
-        let repo = Repository::open(op, "test-repo".to_string(), Some("test-passphrase")).await.expect("Open failed");
+        let repo = Repository::open(op, "test-repo".to_string(), Some("test-passphrase"))
+            .await
+            .expect("Open failed");
         assert!(repo.descriptor().encrypted);
         assert_eq!(repo.chunk_cache.len(), 1);
     }
@@ -772,7 +861,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let op = get_test_op(&temp_dir).await;
 
-        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None)
+            .await
+            .unwrap();
 
         let chunk = Chunk::new(b"Hello, Borg-Rust!".to_vec());
         let chunk_id = chunk.id.clone();

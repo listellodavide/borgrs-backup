@@ -2,7 +2,7 @@ use crate::app_state::BorgAppState as RustAppState;
 use crate::app_state::RepoBookmark;
 use crate::commands;
 use crate::commands::{BackupProgress, RestoreProgress};
-use crate::{ArchiveContentLogic, ArchiveEntry, ArchiveFilesLogic};
+use crate::{ArchiveContentLogic, ArchiveEntry, ArchiveFilesLogic, SchedulerLogic};
 use slint::{ComponentHandle, Model, SharedString};
 use std::path::Path;
 use super::scheduler_bridge;
@@ -39,16 +39,26 @@ impl BackupProgress for GuiBackupProgress {
         });
     }
 
-    fn on_progress(&self, processed: u64, total: u64) {
+    fn on_progress(&self, processed: u64, total: u64, filename: Option<&str>) {
         let progress = if total > 0 {
             processed as f32 / total as f32
         } else {
             1.0
         };
         let window_weak = self.window_weak.clone();
+        let file_opt = filename.map(|s| s.to_string());
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(window) = window_weak.upgrade() {
                 window.global::<AppState>().set_progress(progress);
+                if let Some(file) = file_opt {
+                    let dash = window.global::<DashboardLogic>();
+                    let mut files: Vec<slint::SharedString> = dash.get_processed_files().iter().cloned().collect();
+                    files.insert(0, file.into());
+                    if files.len() > 50 {
+                        files.truncate(50);
+                    }
+                    dash.set_processed_files(slint::VecModel::from(files).into());
+                }
             }
         });
     }
@@ -191,11 +201,38 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 let active_index = dashboard.get_active_repo_index();
                 
                 let repo_path = {
-                    let s = state_clone.lock().unwrap();
-                    if let Some(bm) = s.bookmarks.get(active_index as usize) {
-                        bm.path.clone()
+                    let app = window.global::<AppState>();
+                    let pending_path = app.get_pending_auth_repo_path().to_string();
+                    if !pending_path.is_empty() {
+                        // find repo name for this path
+                        let s = state_clone.lock().unwrap();
+                        s.bookmarks.iter().find(|b| b.path == pending_path).map(|b| b.name.clone()).unwrap_or_default()
                     } else {
-                        return;
+                        let dashboard = window.global::<DashboardLogic>();
+                        let active_index = dashboard.get_active_repo_index();
+                        let s = state_clone.lock().unwrap();
+                        if let Some(bm) = s.bookmarks.get(active_index as usize) {
+                            bm.name.clone()
+                        } else {
+                            return;
+                        }
+                    }
+                };
+
+                let repo_path = {
+                    let app = window.global::<AppState>();
+                    let pending_path = app.get_pending_auth_repo_path().to_string();
+                    if !pending_path.is_empty() {
+                        pending_path
+                    } else {
+                        let dashboard = window.global::<DashboardLogic>();
+                        let active_index = dashboard.get_active_repo_index();
+                        let s = state_clone.lock().unwrap();
+                        if let Some(bm) = s.bookmarks.get(active_index as usize) {
+                            bm.path.clone()
+                        } else {
+                            return;
+                        }
                     }
                 };
 
@@ -203,6 +240,24 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 {
                     let mut s = state_clone.lock().unwrap();
                     s.session_passwords.insert(repo_path.clone(), password.to_string());
+                    // Also store in keyring
+                    let repo_name = {
+                        s.bookmarks.iter().find(|b| b.path == repo_path).map(|b| b.name.clone()).unwrap_or_else(|| "".to_string())
+                    };
+                    if !repo_name.is_empty() {
+                        let _ = s.store_password(&repo_name, &password);
+                    }
+                }
+
+                // Complete interactive auth if pending
+                let auth_oneshot = {
+                    let mut s = state_clone.lock().unwrap();
+                    s.auth_oneshot.take()
+                };
+
+                if let Some(tx) = auth_oneshot {
+                    let _ = tx.send(password.to_string());
+                    return;
                 }
 
                 // Retry last action based on pending_auth_action
@@ -214,10 +269,13 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                             let app = w.global::<AppState>();
                             if action.as_str() == "restore" {
                                 w.global::<RestoreLogic>().invoke_start_restore();
+                            } else if action.as_str() == "save_scheduled_task" {
+                                w.global::<SchedulerLogic>().invoke_save_task();
                             } else {
                                 w.global::<DashboardLogic>().invoke_backup_clicked();
                             }
                             app.set_pending_auth_action(SharedString::from(""));
+                            app.set_pending_auth_repo_path(SharedString::from(""));
                         }
                     }
                 });
@@ -288,15 +346,18 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 let repo_path_clone = repo_path.clone();
                 let progress_reporter = GuiBackupProgress { window_weak: window_weak.clone() };
                 
+                // Clone tags_vec before moving it into the task
+                let tags_vec_for_main_task = tags_vec.clone();
+
                 tokio::spawn(async move {
                     let res = crate::commands::create_archive(
                         &repo_path_clone,
                         repo_password.as_deref(),
                         &name,
                         bm.paths.clone(),
-                        &bm.compression,
+                        bm.compression.as_deref().unwrap_or("zstd,3"),
                         bm.comment.clone(),
-                        tags_vec,
+                        tags_vec_for_main_task,
                         Some(Box::new(progress_reporter)),
                     ).await;
 
@@ -337,8 +398,122 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                                 Err(e) => {
                                     let err_msg = e.to_string();
                                     if err_msg.contains("Repository is locked") {
-                                        w.global::<DashboardLogic>().set_terminal_text(format!("Task queued: {}", err_msg).into());
-                                        // Here we would add the task to a queue
+                                        // Extract lock information
+                                        let lock_task = if let Some(start) = err_msg.find("task '") {
+                                            if let Some(end) = err_msg[start+6..].find("'") {
+                                                &err_msg[start+6..start+6+end]
+                                            } else {
+                                                "unknown"
+                                            }
+                                        } else {
+                                            "unknown"
+                                        };
+
+                                        w.global::<AppState>().set_is_processing(false);
+                                        w.global::<DashboardLogic>().set_terminal_text(
+                                            format!(
+                                                "⏳ Backup queued: Waiting for current backup (task: {}) to complete...\n\nYour backup will start automatically once the repository is unlocked.",
+                                                lock_task
+                                            ).into()
+                                        );
+
+                                        // Queue the task for retry (every 5 seconds, up to 30 minutes)
+                                        let window_weak_retry = window_weak2.clone();
+                                        let repo_path_retry = repo_path_clone.clone();
+                                        let archive_name_retry = name.clone();
+                                        let repo_password_retry = repo_password.clone();
+                                        let bm_retry = bm.clone();
+                                        let tags_vec_retry = tags_vec.clone();
+
+                                        tokio::spawn(async move {
+                                            let mut retry_count = 0;
+                                            let max_retries = 360; // 30 minutes / 5 seconds
+                                            let should_exit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+                                            while !should_exit.load(std::sync::atomic::Ordering::Relaxed) && retry_count < max_retries {
+                                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                                retry_count += 1;
+
+                                                if retry_count > max_retries {
+                                                    let _ = slint::invoke_from_event_loop(move || {
+                                                        if let Some(w) = window_weak_retry.upgrade() {
+                                                            w.global::<DashboardLogic>().set_terminal_text(
+                                                                "❌ Queued backup timeout: Repository remained locked for 30 minutes.".into()
+                                                            );
+                                                            w.global::<AppState>().set_is_processing(false);
+                                                        }
+                                                    });
+                                                    break;
+                                                }
+
+                                                // Try again
+                                                let progress_reporter = GuiBackupProgress { window_weak: window_weak_retry.clone() };
+                                                let res = crate::commands::create_archive(
+                                                    &repo_path_retry,
+                                                    repo_password_retry.as_deref(),
+                                                    &archive_name_retry,
+                                                    bm_retry.paths.clone(),
+                                                    bm_retry.compression.as_deref().unwrap_or("zstd,3"),
+                                                    bm_retry.comment.clone(),
+                                                    tags_vec_retry.clone(),
+                                                    Some(Box::new(progress_reporter)),
+                                                ).await;
+
+                                                let should_exit_clone = should_exit.clone();
+                                                let _ = slint::invoke_from_event_loop({
+                                                    let window_weak_notify = window_weak_retry.clone();
+                                                    let archive_name_notify = archive_name_retry.clone();
+                                                    move || {
+                                                        if let Some(w) = window_weak_notify.upgrade() {
+                                                            match res {
+                                                                Ok(summary) => {
+                                                                    w.global::<AppState>().set_is_processing(false);
+                                                                    w.global::<AppState>().set_progress(1.0);
+
+                                                                    // Update archives list
+                                                                    let dashboard = w.global::<DashboardLogic>();
+                                                                    use slint::{Model, VecModel};
+                                                                    let current_model = dashboard.get_archives();
+                                                                    let mut list: Vec<ArchiveEntry> = Vec::new();
+                                                                    let count = current_model.row_count();
+                                                                    for i in 0..count {
+                                                                        if let Some(item) = current_model.row_data(i) {
+                                                                            list.push(item);
+                                                                        }
+                                                                    }
+                                                                    let new_entry = ArchiveEntry {
+                                                                        name: summary.name.into(),
+                                                                        date: summary.date.into(),
+                                                                        size: summary.size.into(),
+                                                                        hostname: summary.hostname.into(),
+                                                                        comment: summary.comment.into(),
+                                                                        tags: summary.tags.into(),
+                                                                    };
+                                                                    list.insert(0, new_entry);
+                                                                    let model = std::rc::Rc::new(VecModel::from(list));
+                                                                    dashboard.set_archives(model.into());
+
+                                                                    dashboard.set_terminal_text(
+                                                                        format!("✅ Queued backup '{}' completed successfully.", archive_name_notify).into()
+                                                                    );
+                                                                    should_exit_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                                                                }
+                                                                Err(err) => {
+                                                                    if !err.to_string().contains("Repository is locked") {
+                                                                        w.global::<AppState>().set_is_processing(false);
+                                                                        w.global::<DashboardLogic>().set_terminal_text(
+                                                                            format!("❌ Queued backup failed: {}", err).into()
+                                                                        );
+                                                                        should_exit_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                                                                    }
+                                                                    // If still locked, loop continues
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        });
                                     } else if err_msg.contains("Invalid passphrase") || err_msg.contains("Passphrase required") {
                                         w.global::<AppState>().set_pending_auth_action(SharedString::from("backup"));
                                         w.global::<AppState>().set_show_password_dialog(true);
@@ -347,7 +522,7 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                                     } else {
                                         w.global::<AppState>().set_is_processing(false);
                                         w.global::<AppState>().set_progress(0.0);
-                                        w.global::<DashboardLogic>().set_terminal_text(format!("Backup failed: {}", e).into());
+                                        w.global::<DashboardLogic>().set_terminal_text(format!("❌ Backup failed: {}", e).into());
                                     }
                                 }
                             }
@@ -392,9 +567,11 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
 
                 if let Some(path) = repo_path {
                     // Update pending archive state for this repo
-                    let bookmark = {
+                    let (bookmark, repo_name) = {
                         let s = state_clone.lock().unwrap();
-                        s.get_archive_bookmark_for_repo(&path)
+                        let bm = s.get_archive_bookmark_for_repo(&path);
+                        let name = s.bookmarks.get(index as usize).map(|b| b.name.clone());
+                        (bm, name)
                     };
                     
                     if let Some(bm) = bookmark {
@@ -404,6 +581,26 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                     } else {
                         dashboard.set_has_pending_archive(false);
                     }
+
+                    // Try to get password from keyring if not in session
+                    let password_for_check = if password.is_none() {
+                        if let Some(name) = repo_name {
+                            let s = state_clone.lock().unwrap();
+                            if let Ok(pwd) = s.get_password(&name) {
+                                // Update session cache
+                                drop(s);
+                                let mut s = state_clone.lock().unwrap();
+                                s.session_passwords.insert(path.clone(), pwd.clone());
+                                Some(pwd)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        password
+                    };
 
                     // Load archives for the selected repository
                     let window_weak2 = window_weak.clone();
@@ -418,7 +615,7 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                             let repo = borg_core::repository::Repository::open(
                                 op,
                                 repo_path_clone.clone(),
-                                password.as_deref()
+                                password_for_check.as_deref()
                             ).await
                                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                             let manifest = repo.load_manifest()
@@ -475,6 +672,10 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 dashboard.set_is_scheduled_tasks_active(true);
                 dashboard.set_has_selected_repo(false);
                 window.global::<AppState>().set_current_view("scheduled_tasks".into());
+
+                // Refresh the repository list in the scheduler
+                let scheduler = window.global::<SchedulerLogic>();
+                scheduler.invoke_refresh_repositories();
             }
         }
     });
@@ -601,30 +802,40 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                     let s = wizard.get_tags().to_string();
                     if s.is_empty() { None } else { Some(s) }
                 };
-                {
-                    let mut s = state_clone.lock().unwrap();
-                    s.upsert_archive_bookmark(crate::app_state::ArchiveBookmark {
+                let window_weak2 = window_weak.clone();
+                let state_arc = state_clone.clone();
+                tokio::spawn(async move {
+                    let res = crate::app_state::BorgAppState::upsert_archive_bookmark_async(state_arc, crate::app_state::ArchiveBookmark {
+                        id: None,
                         repo_name,
                         repo_path: repo_path.clone(),
-                        compression: compression.clone(),
-                        redundancy,
+                        compression: Some(compression.clone()),
+                        redundancy: Some(redundancy),
                         use_custom_name,
                         archive_name: archive_name_opt.clone(),
                         comment: comment_opt.clone(),
                         tags: tags_opt.clone(),
                         paths: paths_strings.clone(),
+                    }).await;
+
+                    if let Err(e) = res {
+                        eprintln!("Failed to save archive bookmark: {}", e);
+                    }
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(window) = window_weak2.upgrade() {
+                            // Update Dashboard pending state
+                            let dash = window.global::<DashboardLogic>();
+                            dash.set_has_pending_archive(true);
+                            let shared_paths: Vec<SharedString> = paths_strings.into_iter().map(SharedString::from).collect();
+                            dash.set_pending_archive_paths(std::rc::Rc::new(slint::VecModel::from(shared_paths)).into());
+
+                            // Switch back to dashboard
+                            window.global::<AppState>().set_current_view(SharedString::from("dashboard"));
+                            dash.set_terminal_text("Archive configuration saved. You can now press BACKUP NOW.".into());
+                        }
                     });
-                }
-
-                // Update Dashboard pending state
-                let dash = window.global::<DashboardLogic>();
-                dash.set_has_pending_archive(true);
-                let shared_paths: Vec<SharedString> = paths_strings.into_iter().map(SharedString::from).collect();
-                dash.set_pending_archive_paths(std::rc::Rc::new(slint::VecModel::from(shared_paths)).into());
-
-                // Switch back to dashboard
-                window.global::<AppState>().set_current_view(SharedString::from("dashboard"));
-                dash.set_terminal_text("Archive configuration saved. You can now press BACKUP NOW.".into());
+                });
             }
         }
     });
@@ -689,6 +900,26 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 let window_weak_2 = window_weak.clone();
                 let state_arc = state_clone.clone();
                 tokio::spawn(async move {
+                    // Check if name already exists
+                    let exists = {
+                        let s = state_arc.lock().unwrap();
+                        if let Some(db) = &s.db {
+                            db.repo_name_exists(&repo_name).await.unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    };
+
+                    if exists {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = window_weak_2.upgrade() {
+                                w.global::<AppState>().set_is_processing(false);
+                                w.global::<DashboardLogic>().set_terminal_text(format!("Error: Repository name '{}' already exists. Please choose a different name.", repo_name).into());
+                            }
+                        });
+                        return;
+                    }
+
                     // Small staged progress updates
                     let _ = slint::invoke_from_event_loop({
                         let window_weak = window_weak_2.clone();
@@ -716,14 +947,18 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                                 match result {
                                     Ok(()) => {
                                         // Update Rust State
-                                        {
-                                            let mut s = state_arc.lock().unwrap();
-                                            s.add_bookmark(RepoBookmark {
-                                                name: repo_name_c.clone(),
-                                                path: path_url_c.clone(),
-                                                repo_type: repo_type_c.clone(),
-                                            }, password_c);
-                                        }
+                                        let state_arc_2 = state_arc.clone();
+                                        let repo_type_c_2 = repo_type_c.clone();
+                                        let repo_name_c_spawn = repo_name_c.clone();
+                                        let path_url_c_spawn = path_url_c.clone();
+                                        tokio::spawn(async move {
+                                            let _ = crate::app_state::BorgAppState::add_bookmark_async(state_arc_2, RepoBookmark {
+                                                id: None,
+                                                name: repo_name_c_spawn,
+                                                path: path_url_c_spawn,
+                                                repo_type: repo_type_c_2,
+                                            }, password_c).await;
+                                        });
 
                                         w.global::<AppState>().set_progress(1.0);
                                         w.global::<AppState>().set_is_processing(false);
@@ -980,11 +1215,9 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                                         }
                                     }
                                     
-                                    let mut loaded_files = files.len();
                                     let initial_load_size = 4096;
                                     if files.len() > initial_load_size {
                                         files.truncate(initial_load_size);
-                                        loaded_files = initial_load_size;
                                     }
 
                                     files_logic.set_file_list(std::rc::Rc::new(slint::VecModel::from(files)).into());
@@ -1016,21 +1249,3 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
     });
 }
 
-fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-    const TB: u64 = GB * 1024;
-
-    if bytes >= TB {
-        format!("{:.1}T", bytes as f64 / TB as f64)
-    } else if bytes >= GB {
-        format!("{:.1}G", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1}M", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1}K", bytes as f64 / KB as f64)
-    } else {
-        format!("{}B", bytes)
-    }
-}

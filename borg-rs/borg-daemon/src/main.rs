@@ -3,11 +3,11 @@
 //! A Linux daemon for scheduled backup operations with systemd integration.
 
 mod config;
-mod scheduler;
+mod health;
 mod ipc;
 mod job;
-mod health;
 mod notifications;
+mod scheduler;
 mod state;
 
 use std::path::PathBuf;
@@ -16,12 +16,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tokio::sync::{broadcast, RwLock};
-use tracing::{info, error, warn};
+use tracing::{debug, error, info, warn};
 
+use borg_core::db::{Database, JobExecutionHistory, JobState as DbJobState};
 use config::DaemonConfig;
-use scheduler::Scheduler;
-use ipc::ControlServer;
 use health::HealthMonitor;
+use ipc::ControlServer;
+use scheduler::Scheduler;
 use state::JobState;
 
 // Wait, I need to see where borg_core is used.
@@ -88,10 +89,11 @@ pub struct DaemonState {
     running_jobs: RwLock<Vec<String>>,
     job_state: RwLock<std::collections::HashMap<String, JobState>>,
     shutdown_tx: broadcast::Sender<()>,
+    db: Arc<Database>,
 }
 
 impl DaemonState {
-    fn new(config: DaemonConfig, shutdown_tx: broadcast::Sender<()>) -> Self {
+    fn new(config: DaemonConfig, shutdown_tx: broadcast::Sender<()>, db: Arc<Database>) -> Self {
         let mut job_state = std::collections::HashMap::new();
         for job in &config.jobs {
             job_state.insert(job.name.clone(), JobState::default());
@@ -102,7 +104,43 @@ impl DaemonState {
             running_jobs: RwLock::new(Vec::new()),
             job_state: RwLock::new(job_state),
             shutdown_tx,
+            db,
         }
+    }
+
+    pub async fn load_job_states(&self) -> Result<()> {
+        let mut job_states = self.job_state.write().await;
+        for job_name in job_states.keys().cloned().collect::<Vec<_>>() {
+            if let Ok(Some(db_state)) = self.db.get_job_state(&job_name).await {
+                // Convert DbJobState to JobState
+                let state = JobState {
+                    last_run: db_state.last_run.and_then(|s| s.parse().ok()),
+                    last_success: db_state.last_success.and_then(|s| s.parse().ok()),
+                    last_failure: db_state.last_failure.and_then(|s| s.parse().ok()),
+                    consecutive_failures: db_state.consecutive_failures as u32,
+                    last_error: db_state.last_error,
+                    last_failure_alert: db_state.last_failure_alert.and_then(|s| s.parse().ok()),
+                    last_missed_alert: db_state.last_missed_alert.and_then(|s| s.parse().ok()),
+                };
+                job_states.insert(job_name, state);
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn persist_job_state(&self, job_name: &str, state: &JobState) -> Result<()> {
+        let db_state = DbJobState {
+            job_name: job_name.to_string(),
+            last_run: state.last_run.map(|d| d.to_rfc3339()),
+            last_success: state.last_success.map(|d| d.to_rfc3339()),
+            last_failure: state.last_failure.map(|d| d.to_rfc3339()),
+            consecutive_failures: state.consecutive_failures as i32,
+            last_error: state.last_error.clone(),
+            last_failure_alert: state.last_failure_alert.map(|d| d.to_rfc3339()),
+            last_missed_alert: state.last_missed_alert.map(|d| d.to_rfc3339()),
+        };
+        self.db.upsert_job_state(&db_state).await?;
+        Ok(())
     }
 }
 
@@ -146,18 +184,37 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to load configuration")?;
 
-    info!("Loaded {} backup jobs from configuration", config.jobs.len());
+    info!(
+        "Loaded {} backup jobs from configuration",
+        config.jobs.len()
+    );
 
     // Daemonize if not running in foreground
     if !cli.foreground {
         daemonize(&cli.pid_file)?;
     }
 
+    // Initialize database
+    let db_path = &config.global.database_path;
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).context("Failed to create database directory")?;
+    }
+    let db = Arc::new(
+        Database::new(db_path)
+            .await
+            .context("Failed to initialize database")?,
+    );
+
     // Create shutdown channel
     let (shutdown_tx, _) = broadcast::channel(1);
 
     // Create shared state
-    let state = Arc::new(DaemonState::new(config, shutdown_tx.clone()));
+    let state = Arc::new(DaemonState::new(config, shutdown_tx.clone(), db));
+
+    // Load persisted job states
+    if let Err(e) = state.load_job_states().await {
+        warn!("Failed to load job states from database: {}", e);
+    }
 
     // Start control socket server
     let control_server = ControlServer::new(&cli.socket, state.clone());
@@ -238,8 +295,7 @@ async fn main() -> Result<()> {
 fn init_logging(level: &str, foreground: bool) -> Result<()> {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     if foreground {
         // Log to stderr when running in foreground
@@ -249,9 +305,8 @@ fn init_logging(level: &str, foreground: bool) -> Result<()> {
             .init();
     } else {
         // Log to journald when running as daemon
-        let journald_layer = tracing_journald::layer()
-            .context("Failed to connect to journald")?;
-        
+        let journald_layer = tracing_journald::layer().context("Failed to connect to journald")?;
+
         tracing_subscriber::registry()
             .with(filter)
             .with(journald_layer)
@@ -284,17 +339,16 @@ fn daemonize(pid_file: &PathBuf) -> Result<()> {
 /// Wait for SIGTERM signal
 async fn wait_for_sigterm() {
     use tokio::signal::unix::{signal, SignalKind};
-    
-    let mut sigterm = signal(SignalKind::terminate())
-        .expect("Failed to register SIGTERM handler");
-    
+
+    let mut sigterm = signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
+
     sigterm.recv().await;
 }
 
 /// Run the backup scheduler
 async fn run_scheduler(state: Arc<DaemonState>) {
     let mut shutdown_rx = state.shutdown_tx.subscribe();
-    let mut last_check = chrono::Utc::now();
+    let _last_check = chrono::Utc::now();
 
     loop {
         // Check every 30 seconds for pending jobs or updates
@@ -376,14 +430,18 @@ async fn execute_job(state: &Arc<DaemonState>, job_name: &str) -> Result<()> {
     // Get job configuration
     let job_config = {
         let config = state.config.read().await;
-        config.jobs.iter()
+        config
+            .jobs
+            .iter()
             .find(|j| j.name == job_name)
             .cloned()
             .context("Job not found")?
     };
 
+    let start_time = chrono::Utc::now();
     // Execute backup
     let result = job::run_backup_job(&job_config).await;
+    let end_time = chrono::Utc::now();
 
     // Remove from running jobs
     {
@@ -391,18 +449,53 @@ async fn execute_job(state: &Arc<DaemonState>, job_name: &str) -> Result<()> {
         running.retain(|j| j != job_name);
     }
 
-    let now = chrono::Utc::now();
     match &result {
         Ok(stats) => {
-            info!("Job '{}' completed successfully: {} files, {} bytes", 
-                job_name, stats.files_processed, stats.bytes_processed);
-            update_job_state_success(state, job_name, now).await;
+            info!(
+                "Job '{}' completed successfully: {} files, {} bytes",
+                job_name, stats.files_processed, stats.bytes_processed
+            );
+
+            // Record in database history
+            let _ = state
+                .db
+                .record_job_execution(&JobExecutionHistory {
+                    id: None,
+                    job_name: job_name.to_string(),
+                    status: "success".to_string(),
+                    start_time: start_time.to_rfc3339(),
+                    end_time: Some(end_time.to_rfc3339()),
+                    files_processed: stats.files_processed as i64,
+                    bytes_processed: stats.bytes_processed as i64,
+                    archive_name: Some(stats.archive_name.clone()),
+                    error_message: None,
+                })
+                .await;
+
+            update_job_state_success(state, job_name, end_time).await;
             send_success_notification(state, job_name, Some(stats.archive_name.clone())).await;
             mark_job_completed(state, job_name).await;
         }
         Err(e) => {
             error!("Job '{}' failed: {}", job_name, e);
-            update_job_state_failure(state, job_name, now, e.to_string()).await;
+
+            // Record in database history
+            let _ = state
+                .db
+                .record_job_execution(&JobExecutionHistory {
+                    id: None,
+                    job_name: job_name.to_string(),
+                    status: "failure".to_string(),
+                    start_time: start_time.to_rfc3339(),
+                    end_time: Some(end_time.to_rfc3339()),
+                    files_processed: 0,
+                    bytes_processed: 0,
+                    archive_name: None,
+                    error_message: Some(e.to_string()),
+                })
+                .await;
+
+            update_job_state_failure(state, job_name, end_time, e.to_string()).await;
             send_failure_notification(state, job_name, e.to_string()).await;
             send_failure_threshold_notification(state, job_name).await;
             mark_job_completed(state, job_name).await;
@@ -412,32 +505,42 @@ async fn execute_job(state: &Arc<DaemonState>, job_name: &str) -> Result<()> {
     result.map(|_| ())
 }
 
-async fn update_job_state_success(state: &Arc<DaemonState>, job_name: &str, now: chrono::DateTime<chrono::Utc>) {
-    let mut job_state = state.job_state.write().await;
-    if let Some(state) = job_state.get_mut(job_name) {
-        state.record_success(now);
+async fn update_job_state_success(
+    daemon_state: &Arc<DaemonState>,
+    job_name: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    let mut job_state_map = daemon_state.job_state.write().await;
+    if let Some(job_state) = job_state_map.get_mut(job_name) {
+        job_state.record_success(now);
+        let _ = daemon_state.persist_job_state(job_name, job_state).await;
     }
 }
 
 async fn update_job_state_failure(
-    state: &Arc<DaemonState>,
+    daemon_state: &Arc<DaemonState>,
     job_name: &str,
     now: chrono::DateTime<chrono::Utc>,
     error: String,
 ) {
-    let mut job_state = state.job_state.write().await;
-    if let Some(state) = job_state.get_mut(job_name) {
-        state.record_failure(now, error);
+    let mut job_state_map = daemon_state.job_state.write().await;
+    if let Some(job_state) = job_state_map.get_mut(job_name) {
+        job_state.record_failure(now, error);
+        let _ = daemon_state.persist_job_state(job_name, job_state).await;
     }
 }
 
-async fn mark_job_completed(state: &Arc<DaemonState>, job_name: &str) {
-    let mut scheduler = state.scheduler.write().await;
+async fn mark_job_completed(daemon_state: &Arc<DaemonState>, job_name: &str) {
+    let mut scheduler = daemon_state.scheduler.write().await;
     scheduler.job_completed(job_name);
 }
 
-async fn send_success_notification(state: &Arc<DaemonState>, job_name: &str, archive: Option<String>) {
-    let config = state.config.read().await;
+async fn send_success_notification(
+    daemon_state: &Arc<DaemonState>,
+    job_name: &str,
+    archive: Option<String>,
+) {
+    let config = daemon_state.config.read().await;
     if let Some(job) = config.jobs.iter().find(|job| job.name == job_name) {
         if !job.notifications.on_success {
             return;
@@ -455,8 +558,8 @@ async fn send_success_notification(state: &Arc<DaemonState>, job_name: &str, arc
     }
 }
 
-async fn send_failure_notification(state: &Arc<DaemonState>, job_name: &str, error: String) {
-    let config = state.config.read().await;
+async fn send_failure_notification(daemon_state: &Arc<DaemonState>, job_name: &str, error: String) {
+    let config = daemon_state.config.read().await;
     if let Some(job) = config.jobs.iter().find(|job| job.name == job_name) {
         if !job.notifications.on_failure {
             return;
@@ -474,28 +577,29 @@ async fn send_failure_notification(state: &Arc<DaemonState>, job_name: &str, err
     }
 }
 
-async fn send_failure_threshold_notification(state: &Arc<DaemonState>, job_name: &str) {
-    let config = state.config.read().await;
+async fn send_failure_threshold_notification(daemon_state: &Arc<DaemonState>, job_name: &str) {
+    let config = daemon_state.config.read().await;
     if let Some(job) = config.jobs.iter().find(|job| job.name == job_name) {
         let threshold = match job.notifications.failure_threshold {
             Some(value) if value > 0 => value,
             _ => return,
         };
 
-        let mut job_state = state.job_state.write().await;
-        if let Some(state) = job_state.get_mut(job_name) {
-            if state.consecutive_failures < threshold {
+        let mut job_state_map = daemon_state.job_state.write().await;
+        if let Some(job_state) = job_state_map.get_mut(job_name) {
+            if job_state.consecutive_failures < threshold {
                 return;
             }
 
             let now = chrono::Utc::now();
-            if state
+            if job_state
                 .last_failure_alert
                 .is_some_and(|last| now - last < chrono::Duration::minutes(5))
             {
                 return;
             }
-            state.record_failure_alert(now);
+            job_state.record_failure_alert(now);
+            let _ = daemon_state.persist_job_state(job_name, job_state).await;
         }
 
         if let Some(dispatcher) = notifications::build_dispatcher(&job.notifications) {

@@ -1,15 +1,15 @@
-use crate::chunker::{choose_profile_for_size, ChunkId, Chunker, ChunkerProfile};
+use crate::chunker::{ChunkId, Chunker, ChunkerProfile, choose_profile_for_size};
 use crate::compression::CompressionConfig;
 use crate::error::{BorgError, Result};
 use crate::exclusion::ExclusionList;
 use crate::repository::Repository;
+use chrono::{DateTime, Utc};
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
-use chrono::{DateTime, Utc};
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use tracing::{debug, info, instrument, warn};
 use walkdir::WalkDir;
 
@@ -146,7 +146,12 @@ fn default_chunker_profile() -> ChunkerProfile {
 
 impl ArchiveItem {
     /// Create a new file item
-    pub fn file(path: PathBuf, meta: &Metadata, chunks: Vec<ChunkId>, profile: ChunkerProfile) -> Self {
+    pub fn file(
+        path: PathBuf,
+        meta: &Metadata,
+        chunks: Vec<ChunkId>,
+        profile: ChunkerProfile,
+    ) -> Self {
         Self {
             path,
             item_type: ItemType::File,
@@ -252,7 +257,7 @@ pub trait BackupProgress: Send + Sync {
     /// Called when a file is skipped (excluded)
     fn on_file_skipped(&self, path: &Path, reason: &str);
     /// Called periodically with overall progress
-    fn on_progress(&self, processed: u64, total: u64);
+    fn on_progress(&self, processed: u64, total: u64, filename: Option<&str>);
     /// Called when an error occurs (non-fatal)
     fn on_error(&self, path: &Path, error: &str);
 }
@@ -263,7 +268,7 @@ impl BackupProgress for NullProgress {
     fn on_file_start(&self, _path: &Path) {}
     fn on_file_complete(&self, _path: &Path, _size: u64, _chunks: usize) {}
     fn on_file_skipped(&self, _path: &Path, _reason: &str) {}
-    fn on_progress(&self, _processed: u64, _total: u64) {}
+    fn on_progress(&self, _processed: u64, _total: u64, _filename: Option<&str>) {}
     fn on_error(&self, _path: &Path, _error: &str) {}
 }
 
@@ -329,7 +334,8 @@ impl<'a> ArchiveCreator<'a> {
         comment: Option<String>,
         tags: Option<Vec<String>>,
     ) -> Result<Archive> {
-        self.create_with_mapping(name, paths, None, comment, tags).await
+        self.create_with_mapping(name, paths, None, comment, tags)
+            .await
     }
 
     /// Create an archive from a list of paths with optional mapping
@@ -377,9 +383,16 @@ impl<'a> ArchiveCreator<'a> {
         // Calculate total size for progress reporting
         let mut total_size = 0;
         for path in paths {
-            for entry in WalkDir::new(path).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+            for entry in WalkDir::new(path)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
                 let relative_path = entry.path().strip_prefix(path).unwrap_or(entry.path());
-                if !self.exclusions.is_excluded(relative_path, entry.file_type().is_dir()) {
+                if !self
+                    .exclusions
+                    .is_excluded(relative_path, entry.file_type().is_dir())
+                {
                     if let Ok(meta) = entry.metadata() {
                         if meta.is_file() {
                             total_size += meta.len();
@@ -388,11 +401,12 @@ impl<'a> ArchiveCreator<'a> {
                 }
             }
         }
-        self.progress.on_progress(0, total_size);
+        self.progress.on_progress(0, total_size, None);
 
         // Process each path
         for path in paths {
-            self.process_path(path, path, &mut items, &mut stats, total_size).await?;
+            self.process_path(path, path, &mut items, &mut stats, total_size)
+                .await?;
         }
 
         let archive = Archive {
@@ -427,7 +441,9 @@ impl<'a> ArchiveCreator<'a> {
             .into_iter()
             .filter_entry(|e| {
                 let relative_path = e.path().strip_prefix(root).unwrap_or(e.path());
-                let is_excluded = self.exclusions.is_excluded(relative_path, e.file_type().is_dir());
+                let is_excluded = self
+                    .exclusions
+                    .is_excluded(relative_path, e.file_type().is_dir());
                 if is_excluded {
                     self.progress.on_file_skipped(e.path(), "excluded");
                     false
@@ -435,11 +451,9 @@ impl<'a> ArchiveCreator<'a> {
                     true
                 }
             })
-            .filter_map(|e| {
-                match e {
-                    Ok(entry) => Some(Ok(entry)),
-                    Err(e) => Some(Err(e)),
-                }
+            .filter_map(|e| match e {
+                Ok(entry) => Some(Ok(entry)),
+                Err(e) => Some(Err(e)),
             })
             .collect();
 
@@ -459,7 +473,7 @@ impl<'a> ArchiveCreator<'a> {
                 .strip_prefix(root)
                 .unwrap_or(entry_path)
                 .to_path_buf();
-            
+
             let meta = match entry.metadata() {
                 Ok(m) => m,
                 Err(e) => {
@@ -469,7 +483,9 @@ impl<'a> ArchiveCreator<'a> {
                 }
             };
 
-            let item = self.process_entry(entry_path, relative_path, &meta, stats, total_size).await?;
+            let item = self
+                .process_entry(entry_path, relative_path, &meta, stats, total_size)
+                .await?;
             if let Some(item) = item {
                 items.push(item);
             }
@@ -506,7 +522,12 @@ impl<'a> ArchiveCreator<'a> {
                         if let Some(first_path) = self.hardlinks.get(&inode) {
                             // This is a hard link to an already-seen file
                             stats.nfiles += 1;
-                            let mut item = ArchiveItem::file(relative_path, meta, Vec::new(), ChunkerProfile::Default);
+                            let mut item = ArchiveItem::file(
+                                relative_path,
+                                meta,
+                                Vec::new(),
+                                ChunkerProfile::Default,
+                            );
                             item.item_type = ItemType::Hardlink;
                             item.hardlink_target = Some(first_path.clone());
                             self.progress.on_file_complete(path, meta.len(), 0);
@@ -553,11 +574,21 @@ impl<'a> ArchiveCreator<'a> {
 
                 stats.nfiles += 1;
                 stats.original_size += meta.len();
-                self.progress.on_progress(stats.original_size, total_size);
+                self.progress.on_progress(
+                    stats.original_size,
+                    total_size,
+                    Some(relative_path.to_str().unwrap_or("")),
+                );
 
-                self.progress.on_file_complete(path, meta.len(), chunk_ids.len());
+                self.progress
+                    .on_file_complete(path, meta.len(), chunk_ids.len());
 
-                Ok(Some(ArchiveItem::file(relative_path, meta, chunk_ids, profile)))
+                Ok(Some(ArchiveItem::file(
+                    relative_path,
+                    meta,
+                    chunk_ids,
+                    profile,
+                )))
             }
             ItemType::Symlink => {
                 let target = fs::read_link(path)?;
@@ -626,8 +657,18 @@ impl<'a> ArchiveRestorer<'a> {
 
     /// Restore specific paths from an archive to a destination
     #[instrument(skip(self, paths))]
-    pub async fn restore_paths(&self, archive_name: &str, dest: &Path, paths: &[PathBuf]) -> Result<RestoreStats> {
-        info!("Restoring {} paths from archive '{}' to {}", paths.len(), archive_name, dest.display());
+    pub async fn restore_paths(
+        &self,
+        archive_name: &str,
+        dest: &Path,
+        paths: &[PathBuf],
+    ) -> Result<RestoreStats> {
+        info!(
+            "Restoring {} paths from archive '{}' to {}",
+            paths.len(),
+            archive_name,
+            dest.display()
+        );
 
         let archive = self.load_archive(archive_name).await?;
         let mut stats = RestoreStats::default();
@@ -640,24 +681,43 @@ impl<'a> ArchiveRestorer<'a> {
         } else if paths.len() == 1 && paths[0].to_str() == Some("::defaults") {
             // Use original paths if they exist
             if let Some(orig_paths) = &archive.metadata.original_paths {
-                 archive.items.into_iter().filter(|item| {
-                    orig_paths.iter().any(|req_path| item.path == *req_path || item.path.starts_with(req_path))
-                }).collect()
+                archive
+                    .items
+                    .into_iter()
+                    .filter(|item| {
+                        orig_paths.iter().any(|req_path| {
+                            item.path == *req_path || item.path.starts_with(req_path)
+                        })
+                    })
+                    .collect()
             } else {
                 archive.items.clone()
             }
         } else {
-            archive.items.into_iter().filter(|item| {
-                paths.iter().any(|req_path| item.path == *req_path || item.path.starts_with(req_path))
-            }).collect()
+            archive
+                .items
+                .into_iter()
+                .filter(|item| {
+                    paths
+                        .iter()
+                        .any(|req_path| item.path == *req_path || item.path.starts_with(req_path))
+                })
+                .collect()
         };
 
         // Determine effective destination based on absolute path request
         let is_absolute_restore = dest.is_absolute() && dest.to_str() != Some("/");
 
         // Calculate totals for progress bar
-        let total_files = items.iter().filter(|i| i.item_type == ItemType::File).count() as u64;
-        let total_bytes = items.iter().filter(|i| i.item_type == ItemType::File).map(|i| i.size).sum();
+        let total_files = items
+            .iter()
+            .filter(|i| i.item_type == ItemType::File)
+            .count() as u64;
+        let total_bytes = items
+            .iter()
+            .filter(|i| i.item_type == ItemType::File)
+            .map(|i| i.size)
+            .sum();
         self.progress.on_start(total_files, total_bytes);
 
         // Sort items to ensure directories are created before their contents
@@ -677,17 +737,25 @@ impl<'a> ArchiveRestorer<'a> {
             } else {
                 dest.join(&item.path)
             };
-            
+
             match item.item_type {
                 ItemType::Directory => {
                     if let Err(e) = fs::create_dir_all(&target_path) {
-                        let err_msg = format!("Failed to create directory {}: {}", target_path.display(), e);
+                        let err_msg = format!(
+                            "Failed to create directory {}: {}",
+                            target_path.display(),
+                            e
+                        );
                         warn!("{}", err_msg);
                         self.progress.on_error(&target_path, &err_msg);
                         continue;
                     }
                     if let Err(e) = self.restore_attributes(&target_path, &item.attrs) {
-                        let err_msg = format!("Failed to restore attributes for {}: {}", target_path.display(), e);
+                        let err_msg = format!(
+                            "Failed to restore attributes for {}: {}",
+                            target_path.display(),
+                            e
+                        );
                         warn!("{}", err_msg);
                         self.progress.on_error(&target_path, &err_msg);
                     }
@@ -698,14 +766,18 @@ impl<'a> ArchiveRestorer<'a> {
                     if let Some(parent) = target_path.parent() {
                         if !parent.exists() {
                             if let Err(e) = fs::create_dir_all(parent) {
-                                let err_msg = format!("Failed to create parent directory {}: {}", parent.display(), e);
+                                let err_msg = format!(
+                                    "Failed to create parent directory {}: {}",
+                                    parent.display(),
+                                    e
+                                );
                                 warn!("{}", err_msg);
                                 self.progress.on_error(&target_path, &err_msg);
                                 continue;
                             }
                         }
                     }
-                    
+
                     // Reconstruct file from chunks
                     let mut file_data = Vec::new();
                     let mut error_occurred = false;
@@ -720,7 +792,9 @@ impl<'a> ArchiveRestorer<'a> {
                         }
                     }
 
-                    if error_occurred { continue; }
+                    if error_occurred {
+                        continue;
+                    }
 
                     if let Err(e) = fs::write(&target_path, &file_data) {
                         self.progress.on_error(&target_path, &e.to_string());
@@ -738,7 +812,11 @@ impl<'a> ArchiveRestorer<'a> {
                         if let Some(parent) = target_path.parent() {
                             if !parent.exists() {
                                 if let Err(e) = fs::create_dir_all(parent) {
-                                    let err_msg = format!("Failed to create parent directory for symlink {}: {}", target_path.display(), e);
+                                    let err_msg = format!(
+                                        "Failed to create parent directory for symlink {}: {}",
+                                        target_path.display(),
+                                        e
+                                    );
                                     warn!("{}", err_msg);
                                     self.progress.on_error(&target_path, &err_msg);
                                     continue;
@@ -747,7 +825,11 @@ impl<'a> ArchiveRestorer<'a> {
                         }
                         #[cfg(unix)]
                         if let Err(e) = std::os::unix::fs::symlink(target, &target_path) {
-                            let err_msg = format!("Failed to create symlink {}: {}", target_path.display(), e);
+                            let err_msg = format!(
+                                "Failed to create symlink {}: {}",
+                                target_path.display(),
+                                e
+                            );
                             warn!("{}", err_msg);
                             self.progress.on_error(&target_path, &err_msg);
                         }
@@ -767,7 +849,11 @@ impl<'a> ArchiveRestorer<'a> {
                     if let Some(parent) = target_path.parent() {
                         if !parent.exists() {
                             if let Err(e) = fs::create_dir_all(parent) {
-                                let err_msg = format!("Failed to create parent directory for hardlink {}: {}", target_path.display(), e);
+                                let err_msg = format!(
+                                    "Failed to create parent directory for hardlink {}: {}",
+                                    target_path.display(),
+                                    e
+                                );
                                 warn!("{}", err_msg);
                                 self.progress.on_error(&target_path, &err_msg);
                                 continue;
@@ -776,13 +862,19 @@ impl<'a> ArchiveRestorer<'a> {
                     }
                     if link_source.exists() {
                         if let Err(e) = fs::hard_link(&link_source, &target_path) {
-                            let err_msg = format!("Failed to create hardlink from {} to {}: {}", link_source.display(), target_path.display(), e);
+                            let err_msg = format!(
+                                "Failed to create hardlink from {} to {}: {}",
+                                link_source.display(),
+                                target_path.display(),
+                                e
+                            );
                             warn!("{}", err_msg);
                             self.progress.on_error(&target_path, &err_msg);
                         }
                         stats.hardlinks_restored += 1;
                     } else {
-                        let err_msg = format!("Hardlink source not found: {}", link_source.display());
+                        let err_msg =
+                            format!("Hardlink source not found: {}", link_source.display());
                         warn!("{}", err_msg);
                         self.progress.on_error(&target_path, &err_msg);
                     }
@@ -802,7 +894,7 @@ impl<'a> ArchiveRestorer<'a> {
     /// Load an archive by name
     pub async fn load_archive(&self, name: &str) -> Result<Archive> {
         let manifest = self.repo.load_manifest().await?;
-        
+
         let archive_ref = manifest
             .archives
             .iter()
@@ -894,7 +986,9 @@ impl<'a> ArchiveRestorer<'a> {
             });
         }
 
-        Err(BorgError::Deserialization("Failed to deserialize archive (unknown format)".to_string()))
+        Err(BorgError::Deserialization(
+            "Failed to deserialize archive (unknown format)".to_string(),
+        ))
     }
 
     /// Restore file attributes (permissions, ownership, times)
@@ -902,7 +996,7 @@ impl<'a> ArchiveRestorer<'a> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            
+
             // Set permissions
             let perms = fs::Permissions::from_mode(attrs.mode);
             let _ = fs::set_permissions(path, perms);
@@ -949,25 +1043,25 @@ fn get_ntp_timestamp(servers: &[&str]) -> DateTime<Utc> {
 
 // backup_archive_ptintime_<hostname>_<username>_<YYYY-MM-DDTHH:mm:ss.sssZ>
 pub fn default_archive_unique_name() -> String {
-  let ntp_servers = [
-      "ntp1.inrim.it",
-      "ntp2.inrim.it",
-      "0.it.pool.ntp.org",
-      "1.it.pool.ntp.org",
-      "0.ch.pool.ntp.org",
-      "1.ch.pool.ntp.org",
-  ];
+    let ntp_servers = [
+        "ntp1.inrim.it",
+        "ntp2.inrim.it",
+        "0.it.pool.ntp.org",
+        "1.it.pool.ntp.org",
+        "0.ch.pool.ntp.org",
+        "1.ch.pool.ntp.org",
+    ];
 
-  let ts = get_ntp_timestamp(&ntp_servers);
-  let hostname = gethostname();
-  let username = get_username();
+    let ts = get_ntp_timestamp(&ntp_servers);
+    let hostname = gethostname();
+    let username = get_username();
 
-  format!(
-      "backup_archive_ptintime_{}_{}_{}",
-      hostname,
-      username,
-      ts.format("%Y-%m-%dT%H:%M:%S%.3fZ")
-  )
+    format!(
+        "backup_archive_ptintime_{}_{}_{}",
+        hostname,
+        username,
+        ts.format("%Y-%m-%dT%H:%M:%S%.3fZ")
+    )
 }
 
 /// Returns current time as: "HH:MM DD.MM.YYYY" (24h)
@@ -1005,8 +1099,8 @@ fn gethostname() -> String {
     hostname::get()
         .ok()
         .and_then(|h| h.into_string().ok())
-        .or_else(|| std::env::var("HOSTNAME").ok())      // Linux/macOS fallback
-        .or_else(|| std::env::var("COMPUTERNAME").ok())  // Windows fallback
+        .or_else(|| std::env::var("HOSTNAME").ok()) // Linux/macOS fallback
+        .or_else(|| std::env::var("COMPUTERNAME").ok()) // Windows fallback
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -1014,7 +1108,7 @@ fn gethostname() -> String {
 fn get_username() -> String {
     #[cfg(unix)]
     {
-        use libc::{getuid, getpwuid};
+        use libc::{getpwuid, getuid};
         use std::ffi::CStr;
 
         unsafe {
@@ -1037,10 +1131,10 @@ fn get_username() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use crate::storage::{StorageConfig, build_operator};
     use std::fs;
     use std::path::PathBuf;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_archive_creation() {
@@ -1057,7 +1151,9 @@ mod tests {
 
         // Initialize repository
         let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
-        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None)
+            .await
+            .unwrap();
 
         // Create archive
         let creator = ArchiveCreator::new(&mut repo);
@@ -1119,9 +1215,15 @@ mod tests {
         assert_eq!(decoded.items.len(), 1);
         assert_eq!(decoded.items[0].path, PathBuf::from("test/file"));
         assert_eq!(decoded.items[0].symlink_target, None);
-        assert_eq!(decoded.metadata.tags, Some(vec!["tag1".to_string(), "tag2".to_string()]));
+        assert_eq!(
+            decoded.metadata.tags,
+            Some(vec!["tag1".to_string(), "tag2".to_string()])
+        );
         assert_eq!(decoded.items[0].chunker_profile, ChunkerProfile::Size8M);
-        assert_eq!(decoded.metadata.original_paths, Some(vec![PathBuf::from("/tmp/test")]));
+        assert_eq!(
+            decoded.metadata.original_paths,
+            Some(vec![PathBuf::from("/tmp/test")])
+        );
     }
 
     #[tokio::test]
@@ -1132,7 +1234,9 @@ mod tests {
         fs::create_dir_all(&source_dir).unwrap();
 
         let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
-        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None)
+            .await
+            .unwrap();
 
         let creator = ArchiveCreator::new(&mut repo);
         let archive = creator
@@ -1146,14 +1250,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_missing_parents() {
-        use tempfile::TempDir;
-        use crate::storage::build_operator;
         use crate::storage::StorageConfig;
+        use crate::storage::build_operator;
+        use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path().join("repo");
         let source_dir = temp_dir.path().join("source");
-        
+
         // Deep nested source
         let deep_nested = source_dir.join("a/b/c");
         fs::create_dir_all(&deep_nested).unwrap();
@@ -1161,18 +1265,30 @@ mod tests {
 
         // Create archive
         let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
-        let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+        let mut repo = Repository::init(
+            op.clone(),
+            "test-repo".to_string(),
+            Some("passphrase"),
+            None,
+        )
+        .await
+        .unwrap();
         let creator = ArchiveCreator::new(&mut repo);
-        creator.create("test", &[source_dir.clone()], None, None).await.unwrap();
+        creator
+            .create("test", &[source_dir.clone()], None, None)
+            .await
+            .unwrap();
 
         // Restore to a path where intermediate directories don't exist
         let restore_root = temp_dir.path().join("restore_root");
         let deep_restore_dest = restore_root.join("x/y/z");
         // Note: we don't create deep_restore_dest or its parents x/y
 
-        let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
+        let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase"))
+            .await
+            .unwrap();
         let restorer = ArchiveRestorer::new(&repo);
-        
+
         // This should trigger fs::create_dir_all(dest) which creates x/y/z
         let stats = restorer.restore("test", &deep_restore_dest).await.unwrap();
 
@@ -1196,12 +1312,24 @@ mod tests {
 
         // Create archive
         let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
-        let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+        let mut repo = Repository::init(
+            op.clone(),
+            "test-repo".to_string(),
+            Some("passphrase"),
+            None,
+        )
+        .await
+        .unwrap();
         let creator = ArchiveCreator::new(&mut repo);
-        creator.create("backup1", &[source_dir.clone()], None, None).await.unwrap();
+        creator
+            .create("backup1", &[source_dir.clone()], None, None)
+            .await
+            .unwrap();
 
         // Restore archive
-        let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
+        let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase"))
+            .await
+            .unwrap();
         let restorer = ArchiveRestorer::new(&repo);
         let stats = restorer.restore("backup1", &restore_dir).await.unwrap();
 
@@ -1232,25 +1360,45 @@ mod tests {
             symlink("target.txt", source_dir.join("link.txt")).unwrap();
 
             let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
-            let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+            let mut repo = Repository::init(
+                op.clone(),
+                "test-repo".to_string(),
+                Some("passphrase"),
+                None,
+            )
+            .await
+            .unwrap();
 
             let creator = ArchiveCreator::new(&mut repo);
-            let archive = creator.create("symlink-test", &[source_dir.clone()], None, None).await.unwrap();
+            let archive = creator
+                .create("symlink-test", &[source_dir.clone()], None, None)
+                .await
+                .unwrap();
 
             // Check archive stats
             // 1 file, 1 dir (root), 1 symlink
             assert_eq!(archive.stats.nfiles, 1);
 
             // Restore
-            let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
+            let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase"))
+                .await
+                .unwrap();
             let restorer = ArchiveRestorer::new(&repo);
-            let stats = restorer.restore("symlink-test", &restore_dir).await.unwrap();
+            let stats = restorer
+                .restore("symlink-test", &restore_dir)
+                .await
+                .unwrap();
 
             assert_eq!(stats.symlinks_restored, 1);
 
             // Verify symlink
             let link_path = restore_dir.join("link.txt");
-            assert!(fs::symlink_metadata(&link_path).unwrap().file_type().is_symlink());
+            assert!(
+                fs::symlink_metadata(&link_path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
             let target = fs::read_link(&link_path).unwrap();
             assert_eq!(target, PathBuf::from("target.txt"));
         }
@@ -1273,10 +1421,20 @@ mod tests {
             fs::hard_link(&file1, &file2).unwrap();
 
             let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
-            let mut repo = Repository::init(op.clone(), "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+            let mut repo = Repository::init(
+                op.clone(),
+                "test-repo".to_string(),
+                Some("passphrase"),
+                None,
+            )
+            .await
+            .unwrap();
 
             let creator = ArchiveCreator::new(&mut repo);
-            let archive = creator.create("hardlink-test", &[source_dir.clone()], None, None).await.unwrap();
+            let archive = creator
+                .create("hardlink-test", &[source_dir.clone()], None, None)
+                .await
+                .unwrap();
 
             // Should have 2 files, but deduplicated chunks
             assert_eq!(archive.stats.nfiles, 2);
@@ -1284,9 +1442,14 @@ mod tests {
             assert_eq!(archive.stats.nchunks_unique, archive.stats.nchunks);
 
             // Restore
-            let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase")).await.unwrap();
+            let repo = Repository::open(op, "test-repo".to_string(), Some("passphrase"))
+                .await
+                .unwrap();
             let restorer = ArchiveRestorer::new(&repo);
-            let stats = restorer.restore("hardlink-test", &restore_dir).await.unwrap();
+            let stats = restorer
+                .restore("hardlink-test", &restore_dir)
+                .await
+                .unwrap();
 
             assert_eq!(stats.hardlinks_restored, 1);
 
@@ -1315,21 +1478,36 @@ mod tests {
         fs::write(source_dir.join("node_modules/lib.js"), "Code").unwrap();
 
         let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
-        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None)
+            .await
+            .unwrap();
 
         let mut exclusions = ExclusionList::new();
-        exclusions.add_pattern(ExclusionPattern::glob("*.tmp")).unwrap();
-        exclusions.add_pattern(ExclusionPattern::glob("**/node_modules")).unwrap();
+        exclusions
+            .add_pattern(ExclusionPattern::glob("*.tmp"))
+            .unwrap();
+        exclusions
+            .add_pattern(ExclusionPattern::glob("**/node_modules"))
+            .unwrap();
 
         let creator = ArchiveCreator::new(&mut repo).with_exclusions(exclusions);
-        let archive = creator.create("exclude-test", &[source_dir.clone()], None, None).await.unwrap();
+        let archive = creator
+            .create("exclude-test", &[source_dir.clone()], None, None)
+            .await
+            .unwrap();
 
         // Should only contain include.txt and the root dir
         assert_eq!(archive.stats.nfiles, 1);
 
         // Verify items
-        let has_tmp = archive.items.iter().any(|i| i.path.to_string_lossy().contains("exclude.tmp"));
-        let has_node = archive.items.iter().any(|i| i.path.to_string_lossy().contains("node_modules"));
+        let has_tmp = archive
+            .items
+            .iter()
+            .any(|i| i.path.to_string_lossy().contains("exclude.tmp"));
+        let has_node = archive
+            .items
+            .iter()
+            .any(|i| i.path.to_string_lossy().contains("node_modules"));
         assert!(!has_tmp);
         assert!(!has_node);
     }
@@ -1342,13 +1520,20 @@ mod tests {
         fs::create_dir_all(&source_dir).unwrap();
 
         let op = build_operator(StorageConfig::Local { path: repo_path }).unwrap();
-        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None).await.unwrap();
+        let mut repo = Repository::init(op, "test-repo".to_string(), Some("passphrase"), None)
+            .await
+            .unwrap();
 
         let creator = ArchiveCreator::new(&mut repo);
-        creator.create("dup-test", &[source_dir.clone()], None, None).await.unwrap();
+        creator
+            .create("dup-test", &[source_dir.clone()], None, None)
+            .await
+            .unwrap();
 
         let creator = ArchiveCreator::new(&mut repo);
-        let result = creator.create("dup-test", &[source_dir.clone()], None, None).await;
+        let result = creator
+            .create("dup-test", &[source_dir.clone()], None, None)
+            .await;
 
         assert!(matches!(result, Err(BorgError::ArchiveExists { .. })));
     }

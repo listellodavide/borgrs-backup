@@ -62,6 +62,10 @@ pub struct GlobalConfig {
     /// Optional heartbeat file path (written on each health check)
     #[serde(default = "default_heartbeat_path")]
     pub heartbeat_path: Option<PathBuf>,
+
+    /// Database path
+    #[serde(default = "default_database_path")]
+    pub database_path: PathBuf,
 }
 
 fn default_max_concurrent() -> usize { 1 }
@@ -72,6 +76,9 @@ fn default_compression_level() -> u32 { 3 }
 fn default_health_interval() -> u64 { 60 }
 fn default_heartbeat_path() -> Option<PathBuf> {
     Some(PathBuf::from("/run/borgd/borgd.heartbeat"))
+}
+fn default_database_path() -> PathBuf {
+    PathBuf::from("/var/lib/borg-rust/borg.db")
 }
 
 impl Default for GlobalConfig {
@@ -87,6 +94,7 @@ impl Default for GlobalConfig {
             metrics_port: 0,
             health_check_interval: default_health_interval(),
             heartbeat_path: default_heartbeat_path(),
+            database_path: default_database_path(),
         }
     }
 }

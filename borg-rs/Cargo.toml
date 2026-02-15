@@ -4,6 +4,7 @@ members = [
     "borg-core",
     "borg-cli",
     "borg-gui",
+    "borg-daemon",
 ]
 # Note: borg-daemon is Unix-only (requires systemd, Unix sockets, etc.)
 # On Windows, build with: cargo build --workspace --exclude borg-daemon
@@ -20,9 +21,19 @@ description = "High-performance backup solution with deduplication, encryption, 
 # Async runtime
 tokio = { version = "1.44", features = ["full", "tracing"] }
 async-trait = "0.1"
+# Database for local cache
+sled = "0.34"
+
+cronscheduler = "0.1.8"
+
+# Embedded SQLite database (Turso)
+turso = { version = "0.4.3", features = ["sync"] }
+
+# Time handling
+chrono = { version = "0.4.43", features = ["serde"] }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 bincode = "1.3"
 
@@ -38,7 +49,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 zstd = "0.13"
 lz4_flex = "0.11"
 flate2 = "1.0"
-lzma-rs = "0.3"
+lzma-rs = "0.3.0"
 
 # Content-Defined Chunking
 fastcdc = "3.1"
@@ -48,6 +59,7 @@ tonic = "0.12"
 prost = "0.13"
 tower = "0.5"
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"] }
+
 url = { version = "2.5", features = ["serde"] }
 bytes = "1.6"
 tokio-util = { version = "0.7", features = ["io", "codec"] }
@@ -81,16 +93,9 @@ notify = "7.0"
 # SSH for remote repos
 russh = "0.46"
 russh-keys = "0.46"
-
-# Database for local cache
-sled = "0.34"
-
-# Time handling
-chrono = { version = "0.4", features = ["serde"] }
-
 # Config
 toml = "0.8"
-directories = "6.0"
+directories = "6.0.0"
 
 # OpenDAL for native storage backends
 opendal = { version = "0.50", features = ["services-webdav", "services-fs", "services-s3"] }

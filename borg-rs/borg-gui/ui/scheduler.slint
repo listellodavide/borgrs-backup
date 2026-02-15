@@ -69,6 +69,20 @@ export component SchedulerView inherits Rectangle {
                     spacing: 20px;
                     VerticalLayout {
                         spacing: 5px;
+                        width: 150px;
+                        Text { text: "Repo Type"; color: Theme.subtext; }
+                        LineEdit {
+                            text: SchedulerLogic.selected_task_repo_type;
+                            enabled: false; // Read-only from repo selection
+                        }
+                    }
+                    Rectangle {} // Spacer
+                }
+
+                HorizontalLayout {
+                    spacing: 20px;
+                    VerticalLayout {
+                        spacing: 5px;
                         Text { text: "Frequency"; color: Theme.subtext; }
                         ComboBox {
                             model: ["Daily", "Weekly", "Monthly", "Manual"];
@@ -150,6 +164,18 @@ export component SchedulerView inherits Rectangle {
                 }
 
                 HorizontalLayout {
+                    spacing: 20px;
+                    VerticalLayout {
+                        spacing: 5px;
+                        Text { text: "Paths to Backup"; color: Theme.subtext; }
+                        for path in SchedulerLogic.tasks[SchedulerLogic.selected_task_index].paths_to_backup : Text {
+                            text: "• " + path;
+                            color: Theme.text;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
                     spacing: 10px;
                     Button { text: "Cancel"; clicked => { SchedulerLogic.selected_task_index = -1; } }
                     Rectangle {} // Spacer
@@ -171,10 +197,11 @@ export component SchedulerView inherits Rectangle {
                     HorizontalLayout {
                         padding-left: 15px;
                         Text { text: "Active"; width: 60px; color: Theme.subtext; vertical-alignment: center; }
-                        Text { text: "Repository"; width: 150px; color: Theme.subtext; vertical-alignment: center; }
-                        Text { text: "Archive"; width: 150px; color: Theme.subtext; vertical-alignment: center; }
-                        Text { text: "Schedule"; width: 200px; color: Theme.subtext; vertical-alignment: center; }
-                        Text { text: "Last Execution"; width: 150px; color: Theme.subtext; vertical-alignment: center; }
+                        Text { text: "Repository"; width: 120px; color: Theme.subtext; vertical-alignment: center; }
+                        Text { text: "Archive"; width: 130px; color: Theme.subtext; vertical-alignment: center; }
+                        Text { text: "Schedule"; width: 160px; color: Theme.subtext; vertical-alignment: center; }
+                        Text { text: "Paths"; width: 180px; color: Theme.subtext; vertical-alignment: center; }
+                        Text { text: "Last Execution"; width: 120px; color: Theme.subtext; vertical-alignment: center; }
                         Rectangle {}
                         Text { text: "Actions"; width: 80px; color: Theme.subtext; vertical-alignment: center; }
                     }
@@ -196,16 +223,25 @@ export component SchedulerView inherits Rectangle {
                                         toggled => { SchedulerLogic.toggle_task_active(i, self.checked); }
                                     }
                                 }
-                                Text { text: task.repo_name; width: 150px; color: Theme.text; vertical-alignment: center; }
-                                Text { text: task.archive_name; width: 150px; color: Theme.text; vertical-alignment: center; }
+                                Text { text: task.repo_name; width: 120px; color: Theme.text; vertical-alignment: center; }
+                                Text { text: task.archive_name; width: 130px; color: Theme.text; vertical-alignment: center; }
                                 Text {
                                     text: (task.schedule.schedule_type == ScheduleType.Daily ? "Daily" :
                                           (task.schedule.schedule_type == ScheduleType.Weekly ? "Weekly" :
                                           (task.schedule.schedule_type == ScheduleType.Monthly ? "Monthly" : "Manual")))
                                           + " at " + (task.schedule.hour < 10 ? "0" : "") + task.schedule.hour + ":" + (task.schedule.minute < 10 ? "0" : "") + task.schedule.minute;
-                                    width: 200px; color: Theme.text; vertical-alignment: center;
+                                    width: 160px; color: Theme.text; vertical-alignment: center;
                                 }
-                                Text { text: task.last_run; width: 150px; color: Theme.subtext; vertical-alignment: center; }
+                                Text {
+                                    text: task.paths_to_backup.length > 0 ?
+                                            (task.paths_to_backup.length == 1 ?
+                                                task.paths_to_backup[0] :
+                                                task.paths_to_backup.length + " paths") :
+                                            "No paths";
+                                    width: 180px; color: Theme.subtext;
+                                    vertical-alignment: center;
+                                }
+                                Text { text: task.last_run; width: 120px; color: Theme.subtext; vertical-alignment: center; }
                                 Rectangle {}
                                 HorizontalLayout {
                                     width: 80px;

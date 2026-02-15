@@ -1,13 +1,13 @@
 //! Backup job execution
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use tracing::{debug, error, info, warn, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 use borg_core::{
-    archive::{ArchiveCreator, Archive},
+    archive::{Archive, ArchiveCreator},
     compression::{CompressionAlgorithm, CompressionConfig, CompressionLevel, Compressor},
     exclusion::{ExclusionList, ExclusionPattern},
     repository::Repository,
@@ -20,8 +20,6 @@ use crate::config::BackupJob;
 pub struct JobStats {
     pub files_processed: u64,
     pub bytes_processed: u64,
-    pub bytes_deduplicated: u64,
-    pub bytes_compressed: u64,
     pub duration_secs: f64,
     pub archive_name: String,
 }
@@ -58,7 +56,8 @@ pub async fn run_backup_job(job: &BackupJob) -> Result<JobStats> {
         exclusion_matcher,
         &compression,
         job,
-    ).await?;
+    )
+    .await?;
 
     // Run prune if configured (disabled for now - Pruner missing in core)
     /*
@@ -80,8 +79,6 @@ pub async fn run_backup_job(job: &BackupJob) -> Result<JobStats> {
     let stats = JobStats {
         files_processed: archive.stats.nfiles,
         bytes_processed: archive.stats.original_size,
-        bytes_deduplicated: archive.stats.deduplicated_size,
-        bytes_compressed: archive.stats.compressed_size,
         duration_secs: duration.as_secs_f64(),
         archive_name,
     };
@@ -157,7 +154,10 @@ fn generate_archive_name(template: &str) -> Result<String> {
     let name = template
         .replace("{hostname}", &hostname)
         .replace("{now}", &now.format("%Y-%m-%d_%H:%M:%S").to_string())
-        .replace("{now:%Y-%m-%d_%H:%M:%S}", &now.format("%Y-%m-%d_%H:%M:%S").to_string())
+        .replace(
+            "{now:%Y-%m-%d_%H:%M:%S}",
+            &now.format("%Y-%m-%d_%H:%M:%S").to_string(),
+        )
         .replace("{now:%Y-%m-%d}", &now.format("%Y-%m-%d").to_string());
 
     Ok(name)
@@ -165,12 +165,14 @@ fn generate_archive_name(template: &str) -> Result<String> {
 
 /// Open or connect to repository
 async fn open_repository(repo_str: &str) -> Result<Repository> {
-    use borg_core::storage::{parse_storage_config, build_operator};
+    use borg_core::storage::{build_operator, parse_storage_config};
     let config = parse_storage_config(repo_str)?;
     let op = build_operator(config)?;
-    
+
     // For now, assume no passphrase or handle it if available in config
-    Repository::open(op, repo_str.to_string(), None).await.context("Failed to open repository")
+    Repository::open(op, repo_str.to_string(), None)
+        .await
+        .context("Failed to open repository")
 }
 
 /// Create a backup archive
@@ -188,9 +190,11 @@ async fn create_archive(
     creator = creator.with_exclusions(exclusion_list);
 
     // Note: one_file_system, read_special, etc. are not yet in core ArchiveCreator
-    
+
     // Create the archive (async)
-    creator.create(archive_name, paths, job.archive_name.clone().into()).await
+    creator
+        .create(&archive_name, paths, None, None)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to create archive: {}", e))
 }
 
@@ -219,52 +223,15 @@ async fn run_hook_command(hook_type: &str, command: &str) -> Result<()> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         error!("{} command failed: {}", hook_type, stderr);
-        anyhow::bail!("{} command failed with status: {}", hook_type, output.status);
+        anyhow::bail!(
+            "{} command failed with status: {}",
+            hook_type,
+            output.status
+        );
     }
 
     debug!("{} command completed successfully", hook_type);
     Ok(())
-}
-
-/// Retry a backup job with exponential backoff
-pub async fn run_backup_job_with_retry(
-    job: &BackupJob,
-) -> Result<JobStats> {
-    let retry_config = &job.retry;
-    let mut attempt = 0;
-    let mut delay = std::time::Duration::from_secs(retry_config.initial_delay);
-
-    loop {
-        attempt += 1;
-        
-        match run_backup_job(job).await {
-            Ok(stats) => return Ok(stats),
-            Err(e) => {
-                if attempt > retry_config.max_retries {
-                    error!(
-                        "Job '{}' failed after {} attempts: {}", 
-                        job.name, attempt, e
-                    );
-                    return Err(e);
-                }
-
-                warn!(
-                    "Job '{}' attempt {} failed: {}. Retrying in {:?}",
-                    job.name, attempt, e, delay
-                );
-
-                tokio::time::sleep(delay).await;
-
-                // Calculate next delay with exponential backoff
-                delay = std::cmp::min(
-                    std::time::Duration::from_secs_f64(
-                        delay.as_secs_f64() * retry_config.backoff_multiplier
-                    ),
-                    std::time::Duration::from_secs(retry_config.max_delay),
-                );
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -275,7 +242,7 @@ mod tests {
     fn test_archive_name_generation() {
         let template = "{hostname}-backup-{now:%Y-%m-%d}";
         let name = generate_archive_name(template).unwrap();
-        
+
         // Should contain hostname and date
         assert!(name.contains('-'));
         assert!(name.contains("backup"));
@@ -309,7 +276,7 @@ mod tests {
             retry: Default::default(),
         };
 
-        let compressor = resolve_compression(&job).unwrap();
+        let _compressor = resolve_compression(&job).unwrap();
         // Compression should be created successfully
     }
 }

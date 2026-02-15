@@ -133,7 +133,6 @@ pub async fn create_archive(
     })
 }
 
-
 pub async fn list_archives(repo_path: &str, repo_password: Option<&str>) -> Result<Vec<String>> {
     let storage = if repo_path.starts_with("/") || repo_path.contains(":\\") {
         StorageConfig::Local {
@@ -157,6 +156,56 @@ pub async fn list_archives(repo_path: &str, repo_password: Option<&str>) -> Resu
 
     let archives = manifest.archives.into_iter().map(|a| a.name).collect();
     Ok(archives)
+}
+
+pub async fn get_archive_paths(
+    repo_path: &str,
+    repo_password: Option<&str>,
+    archive_name: &str,
+) -> Result<Vec<String>> {
+    let storage = if repo_path.starts_with("/") || repo_path.contains(":\\") {
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
+    } else {
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
+    };
+
+    let op = build_operator(storage).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let repo = Repository::open(op, repo_path.to_string(), repo_password)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let manifest = repo
+        .load_manifest()
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let archive_ref = manifest
+        .archives
+        .iter()
+        .find(|a| a.name == archive_name)
+        .ok_or_else(|| anyhow::anyhow!("Archive '{}' not found", archive_name))?;
+
+    let chunk = repo
+        .get_chunk(&archive_ref.id)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let archive: Archive = bincode::deserialize(&chunk.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize archive data: {}", e))?;
+
+    let paths = archive
+        .metadata
+        .original_paths
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    Ok(paths)
 }
 
 /// Initialize a repository using borg-core APIs based on wizard inputs.
@@ -312,24 +361,31 @@ pub async fn list_archive_files(
 
     // The ID in the manifest points to the chunk containing the bincode-serialized Archive struct.
     // We need to get this chunk and deserialize it, not treat it as a JSON tree.
-    let chunk = repo.get_chunk(&archive_ref.id).await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let chunk = repo
+        .get_chunk(&archive_ref.id)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     let archive: Archive = bincode::deserialize(&chunk.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize archive data: {}", e))?;
 
-    let entries: Vec<FileEntry> = archive.items.into_iter().map(|item| {
-        FileEntry {
-            path: item.path.to_string_lossy().to_string(),
-            size: item.size,
-            is_dir: item.item_type == ItemType::Directory,
-            mode: item.attrs.mode,
-            // The FileEntry struct expects user/group as strings, but the archive stores UID/GID.
-            // For now, we'll convert them to strings. A real implementation might resolve them to names.
-            user: item.attrs.uid.to_string(),
-            group: item.attrs.gid.to_string(),
-            mtime: item.attrs.mtime,
-        }
-    }).collect();
+    let entries: Vec<FileEntry> = archive
+        .items
+        .into_iter()
+        .map(|item| {
+            FileEntry {
+                path: item.path.to_string_lossy().to_string(),
+                size: item.size,
+                is_dir: item.item_type == ItemType::Directory,
+                mode: item.attrs.mode,
+                // The FileEntry struct expects user/group as strings, but the archive stores UID/GID.
+                // For now, we'll convert them to strings. A real implementation might resolve them to names.
+                user: item.attrs.uid.to_string(),
+                group: item.attrs.gid.to_string(),
+                mtime: item.attrs.mtime,
+            }
+        })
+        .collect();
 
     Ok(entries)
 }
@@ -337,10 +393,9 @@ pub async fn list_archive_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::{self, File};
-    use std::io::Write;
-    use tempfile::tempdir;
     use std::collections::HashSet;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[tokio::test]
     async fn test_create_and_list_archive() -> Result<()> {
@@ -397,14 +452,17 @@ mod tests {
         let expected_paths: HashSet<String> = [
             format!("{}/file1.txt", src_dir_name),
             format!("subdir"),
-            format!("subdir/file2.txt", ),
+            format!("subdir/file2.txt",),
             format!("{}", src_dir_name),
         ]
         .iter()
         .cloned()
         .collect();
 
-        let paths_found_set: HashSet<String> = paths_found.into_iter().map(|p| p.trim_start_matches('/').to_string()).collect();
+        let paths_found_set: HashSet<String> = paths_found
+            .into_iter()
+            .map(|p| p.trim_start_matches('/').to_string())
+            .collect();
 
         assert_eq!(paths_found_set, expected_paths);
 
