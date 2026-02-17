@@ -1,242 +1,270 @@
-//! Archive creation command
-
-use std::time::Instant;
-
-use anyhow::{Context, Result};
+use crate::{Cli};
+use crate::commands::get_passphrase;
+use borg_core::archive::{ArchiveCreator, BackupProgress, default_archive_unique_name};
+use borg_core::chunker::ChunkerProfile;
+use borg_core::compression::{CompressionConfig, Compressor, CompressionAlgorithm, CompressionLevel};
+use borg_core::exclusion::{ExclusionList, ExclusionPattern};
+use borg_core::repository::Repository;
+use borg_core::storage::{build_operator, parse_storage_config};
+use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
-use tracing::{info, debug};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use anyhow::Result;
 
-use borg_core::{
-    archive::{default_archive_unique_name, ArchiveCreator, BackupProgress},
-    compression::{CompressionAlgorithm, CompressionConfig, CompressionLevel, Compressor},
-    exclusion::{ExclusionList, ExclusionPattern},
-};
-use std::path::Path;
+#[derive(Args, Debug)]
+pub struct CreateArgs {
+    /// Manually specify archive name, otherwise a unique name is generated
+    #[arg(long = "force-archive-name")]
+    archive: Option<String>,
 
-use super::{format_duration, format_size, get_repo_path, open_repository};
-use crate::{Cli, CreateArgs};
+    /// Paths to back up
+    #[arg(required = true)]
+    paths: Vec<PathBuf>,
 
-pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
-    let repo_path_raw = get_repo_path(cli)?;
+    /// WebDAV username
+    #[arg(long, value_name = "USER")]
+    webdav_user: Option<String>,
 
-    // Normalize WebDAV URL if credentials are provided (either from CLI or if it's a remote repo)
-    let repo_path = if args.webdav_user.is_some() || args.webdav_pass.is_some() {
-        let scheme = if cli.remote_repo.is_some() {
-            if repo_path_raw.starts_with("https") || repo_path_raw.starts_with("webdavs") || repo_path_raw.starts_with("davs") {
-                "webdavs"
-            } else {
-                "webdav"
-            }
-        } else {
-            "webdav"
-        };
-        crate::commands::init::normalize_webdav_url(
-            &repo_path_raw,
-            scheme,
-            args.webdav_user.as_deref(),
-            args.webdav_pass.as_deref(),
-        )?
-    } else {
-        repo_path_raw
-    };
+    /// WebDAV password
+    #[arg(long, value_name = "PASS")]
+    webdav_pass: Option<String>,
 
-    let start_time = Instant::now();
+    /// Exclude paths matching pattern
+    #[arg(short, long, action = clap::ArgAction::Append)]
+    exclude: Vec<String>,
 
-    let archive_name = args.archive.clone().unwrap_or_else(default_archive_unique_name);
+    /// Read exclude patterns from file
+    #[arg(long, action = clap::ArgAction::Append)]
+    exclude_from: Vec<PathBuf>,
 
-    info!("Creating archive '{}' in repository {}", archive_name, repo_path);
+    /// Exclude directories containing CACHEDIR.TAG
+    #[arg(long)]
+    exclude_caches: bool,
 
-    // Validate paths exist
-    for path in &args.paths {
-        if !path.exists() {
-            anyhow::bail!("Path does not exist: {:?}", path);
-        }
-    }
+    /// Exclude directories containing specified file
+    #[arg(long, action = clap::ArgAction::Append)]
+    exclude_if_present: Vec<String>,
 
-    // Build exclusion matcher
-    let exclusion_matcher = build_exclusion_matcher(&args)?;
+    /// Compression algorithm (none, lz4, zstd, zlib, lzma, xz)
+    #[arg(short, long, default_value = "zstd")]
+    compression: String,
 
-    // Configure compression
-    let compressor = build_compressor(&args)?;
-    debug!("Using compression: {} (level {})", compressor.config().algorithm, compressor.config().level.0);
+    /// Compression level
+    #[arg(long)]
+    compression_level: Option<u32>,
 
-    // Open repository
-    let mut repo = open_repository(&repo_path).await
-        .context("Failed to open repository")?;
+    /// Stay in same filesystem (don't cross mount points)
+    #[arg(short = 'x', long)]
+    one_file_system: bool,
 
-    // Create progress bar if requested
-    let progress = if cli.progress {
-        println!("Scanning files to calculate total...");
-        let total_files = count_files_recursive(&args.paths);
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-                .unwrap()
-        );
-        pb.set_length(total_files);
-        pb.set_message("Starting backup...");
-        Some((pb, total_files))
-    } else {
-        None
-    };
+    /// Open and read special files
+    #[arg(long)]
+    read_special: bool,
 
-    // Build archive creator
-    let mut creator = ArchiveCreator::new(&mut repo)
-        .with_exclusions(exclusion_matcher)
-        .with_compression(compressor.config().clone());
+    /// Store numeric user/group IDs only
+    #[arg(long)]
+    numeric_ids: bool,
 
-    // Apply forced chunker profile if provided
-    if let Some(profile) = args.force_chunk_profile {
-        creator = creator.with_forced_chunker_profile(profile);
-    }
+    /// Don't store access times
+    #[arg(long)]
+    noatime: bool,
 
-    // Set progress handler if enabled
-    if let Some((pb, total)) = &progress {
-        let cli_progress = CliProgress {
-            pb: pb.clone(),
-            list_files: args.list,
-            total_files: *total,
-        };
-        creator = creator.with_progress(Box::new(cli_progress));
-    }
+    /// Exclude files flagged nodump
+    #[arg(long)]
+    exclude_nodump: bool,
 
-    // Create the archive
-    if args.dry_run {
-        println!("Dry run - no archive created");
-        return Ok(());
-    }
+    /// Add a comment to the archive
+    #[arg(long)]
+    comment: Option<String>,
 
-    let archive = creator.create(&archive_name, &args.paths, args.comment.clone(), args.tags.clone()).await
-        .map_err(|e| anyhow::anyhow!("Failed to create archive: {}", e))?;
+    /// Add tags to the archive
+    #[arg(long, action = clap::ArgAction::Append)]
+    tags: Option<Vec<String>>,
 
-    // Finish progress bar
-    if let Some((pb, _)) = progress {
-        pb.finish_with_message("Done");
-        println!("[ 100%] transfer completed");
-    }
+    /// Timestamp for archive (ISO format or "now")
+    #[arg(long)]
+    timestamp: Option<String>,
 
-    let duration = start_time.elapsed();
+    /// Checkpoint interval in seconds
+    #[arg(long, default_value = "1800")]
+    checkpoint_interval: u64,
 
-    println!("Archive: {}", archive_name);
-    println!("Status: Success");
-    println!("Files: {}", archive.stats.nfiles);
-    println!("Directories: {}", archive.stats.ndirs);
-    println!("Original size: {}", format_size(archive.stats.original_size));
-    println!("Compressed size: {}", format_size(archive.stats.compressed_size));
-    println!("Deduplicated size: {}", format_size(archive.stats.deduplicated_size));
-    println!("Duration: {}", format_duration(duration.as_secs_f64()));
-    println!("Average speed: {}/s", format_size((archive.stats.original_size as f64 / duration.as_secs_f64()) as u64));
+    /// Force a specific chunker profile (e.g., 1mb, 4mb, default)
+    #[arg(long)]
+    force_chunk_profile: Option<ChunkerProfile>,
 
-    // Print statistics if requested
-    if args.stats {
-        println!();
-        println!("Archive: {}", archive_name);
-        println!("Duration: {}", format_duration(duration.as_secs_f64()));
-        println!();
-        println!("                       Original size      Compressed size    Deduplicated size");
-        println!("This archive:          {:>15}    {:>15}    {:>15}",
-            format_size(archive.stats.original_size),
-            format_size(archive.stats.compressed_size),
-            format_size(archive.stats.deduplicated_size)
-        );
-        println!();
-        println!("Number of files: {}", archive.stats.nfiles);
-    }
+    /// Dry run (don't create archive)
+    #[arg(short = 'n', long)]
+    dry_run: bool,
 
-    Ok(())
-}
+    /// Print statistics
+    #[arg(short, long)]
+    stats: bool,
 
-fn build_exclusion_matcher(args: &CreateArgs) -> Result<ExclusionList> {
-    let mut patterns = Vec::new();
+    /// Print file list
+    #[arg(long)]
+    list: bool,
 
-    // Add exclude patterns
-    for pattern in &args.exclude {
-        patterns.push(ExclusionPattern::glob(pattern));
-    }
+    /// Print files with status (A=added, M=modified, etc.)
+    #[arg(long)]
+    filter: Option<String>,
 
-    let mut list = ExclusionList::from_patterns(patterns)?;
-
-    // Load patterns from files
-    for file in &args.exclude_from {
-        if file.exists() {
-            let file_list = ExclusionList::from_file(file)?;
-            for pattern in file_list.patterns() {
-                list.add_pattern(pattern.clone())?;
-            }
-        } else {
-            anyhow::bail!("Exclude file not found: {:?}", file);
-        }
-    }
-
-    Ok(list)
+    /// Verbose output
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 struct CliProgress {
     pb: ProgressBar,
     list_files: bool,
-    total_files: u64,
+}
+
+impl CliProgress {
+    fn new(list_files: bool) -> Self {
+        let pb = ProgressBar::new(0);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg}")
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+        pb.enable_steady_tick(Duration::from_millis(100));
+        Self { pb, list_files }
+    }
 }
 
 impl BackupProgress for CliProgress {
     fn on_file_start(&self, path: &Path) {
-        let pos = self.pb.position();
-        let percent = if self.total_files > 0 {
-            (pos * 100) / self.total_files
-        } else {
-            0
-        };
-        
-        // Print the log line above the progress bar
-        self.pb.println(format!("[{:3}%] {}", percent, path.display()));
-        
-        if !self.list_files {
-            self.pb.set_message(format!("Processing: {}", path.display()));
+        if self.list_files {
+            self.pb.println(format!("A {}", path.display()));
         }
+        self.pb.set_message(format!("Processing: {}", path.display()));
     }
 
     fn on_file_complete(&self, _path: &Path, _size: u64, _chunks: usize) {
         self.pb.inc(1);
     }
 
-    fn on_file_skipped(&self, _path: &Path, _reason: &str) {}
+    fn on_file_skipped(&self, path: &Path, reason: &str) {
+        if self.list_files {
+            self.pb.println(format!("S {} ({})", path.display(), reason));
+        }
+    }
 
-    fn on_progress(&self, _processed: u64, _total: u64, _filename: Option<&str>) {}
+    fn on_progress(&self, processed: u64, total: u64, filename: Option<&str>) {
+        self.pb.set_length(total);
+        self.pb.set_position(processed);
+        if let Some(name) = filename {
+             self.pb.set_message(format!("Processing: {}", name));
+        }
+    }
 
-    fn on_error(&self, _path: &Path, _error: &str) {}
+    fn on_error(&self, path: &Path, error: &str) {
+        self.pb.println(format!("E {} ({})", path.display(), error));
+    }
 }
 
 fn build_compressor(args: &CreateArgs) -> Result<Compressor> {
     let algo_str = &args.compression;
-    let level_num = args.compression_level.unwrap_or(3) as u8;
+    let level = args.compression_level;
 
-    let algorithm = CompressionAlgorithm::from_str(algo_str)
-        .map_err(|e| anyhow::anyhow!("Invalid compression algorithm: {}", e))?;
-    let level = CompressionLevel::new(level_num)
-        .map_err(|e| anyhow::anyhow!("Invalid compression level: {}", e))?;
+    let algorithm = match algo_str.to_lowercase().as_str() {
+        "none" => CompressionAlgorithm::None,
+        "lz4" => CompressionAlgorithm::Lz4,
+        "zstd" => CompressionAlgorithm::Zstd,
+        "zlib" => CompressionAlgorithm::Zlib,
+        "lzma" => CompressionAlgorithm::Lzma,
+        "xz" => CompressionAlgorithm::Xz,
+        _ => return Err(anyhow::anyhow!("Unknown compression algorithm: {}", algo_str)),
+    };
+
+    let level_val = level.unwrap_or(3) as u8;
+    let compression_level = CompressionLevel::new(level_val).unwrap_or(CompressionLevel::DEFAULT);
 
     let config = CompressionConfig {
         algorithm,
-        level,
+        level: compression_level,
         ..Default::default()
     };
 
     Ok(Compressor::new(config))
 }
 
-fn count_files_recursive(paths: &[std::path::PathBuf]) -> u64 {
-    let mut count = 0;
-    for path in paths {
-        if path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    count += count_files_recursive(&[path]);
-                }
-            }
-        } else if path.is_file() {
-            count += 1;
+pub async fn run(cli: &Cli, args: &CreateArgs) -> Result<()> {
+    let repo_path_str = super::get_repo_path(cli)?;
+    let passphrase = get_passphrase("Enter passphrase: ").await?;
+
+    let config = parse_storage_config(&repo_path_str)?;
+    let operator = build_operator(config)?;
+
+    let mut repo = Repository::open(operator, repo_path_str, Some(&passphrase)).await?;
+
+    let mut exclusions = ExclusionList::new();
+    for pattern in &args.exclude {
+        exclusions.add_pattern(ExclusionPattern::glob(pattern))?;
+    }
+
+    // Handle exclude_from files
+    for file in &args.exclude_from {
+        if file.exists() {
+             let file_exclusions = ExclusionList::from_file(file)?;
+             for pattern in file_exclusions.patterns() {
+                 exclusions.add_pattern(pattern.clone())?;
+             }
+        } else {
+            eprintln!("Warning: Exclusion file not found: {}", file.display());
         }
     }
-    count
+
+    // Handle exclude_caches
+    if args.exclude_caches {
+        use borg_core::exclusion::CommonExclusions;
+        for pattern in CommonExclusions::caches() {
+            exclusions.add_pattern(pattern)?;
+        }
+    }
+
+    let progress = Box::new(CliProgress::new(args.list || args.verbose));
+
+    let compressor = build_compressor(args)?;
+    repo.set_compressor(compressor);
+
+    let mut creator = ArchiveCreator::new(&mut repo)
+        .with_exclusions(exclusions)
+        .with_progress(progress);
+
+    if let Some(profile) = args.force_chunk_profile {
+        creator = creator.with_forced_chunker_profile(profile);
+    }
+
+    let archive_name = args.archive.clone().unwrap_or_else(default_archive_unique_name);
+
+    if args.dry_run {
+        println!("Dry run: would create archive '{}' from {} paths", archive_name, args.paths.len());
+        return Ok(());
+    }
+
+    let archive = creator
+        .create(
+            &archive_name,
+            &args.paths,
+            args.comment.clone(),
+            args.tags.clone(),
+        )
+        .await?;
+
+    if args.stats {
+        println!(
+            "Archive '{}' created successfully. Size: {}, Compressed: {}, Dedup: {}",
+            archive.metadata.name,
+            humansize::format_size(archive.stats.original_size, humansize::BINARY),
+            humansize::format_size(archive.stats.compressed_size, humansize::BINARY),
+            humansize::format_size(archive.stats.deduplicated_size, humansize::BINARY),
+        );
+    } else {
+        println!("Archive '{}' created successfully.", archive.metadata.name);
+    }
+
+    Ok(())
 }

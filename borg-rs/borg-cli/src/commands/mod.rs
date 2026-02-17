@@ -1,5 +1,6 @@
 //! CLI command implementations
 
+pub mod common;
 pub mod init;
 pub mod create;
 pub mod restore;

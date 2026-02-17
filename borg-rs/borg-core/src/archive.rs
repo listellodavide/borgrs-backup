@@ -8,8 +8,9 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fs::{self, Metadata};
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, Component};
 use tracing::{debug, info, instrument, warn};
 use walkdir::WalkDir;
 
@@ -212,10 +213,8 @@ pub struct ArchiveMetadata {
     pub tags: Option<Vec<String>>,
     /// Original paths backed up
     pub original_paths: Option<Vec<PathBuf>>,
-    /// Path mapping for restoration (target -> source_root)
+    /// Path mapping for restoration (archive_prefix -> source_root)
     pub path_mapping: Option<HashMap<PathBuf, PathBuf>>,
-    /// Compression configuration used for this archive
-    pub compression: Option<CompressionConfig>,
 }
 
 /// A complete archive containing items and metadata
@@ -270,6 +269,60 @@ impl BackupProgress for NullProgress {
     fn on_file_skipped(&self, _path: &Path, _reason: &str) {}
     fn on_progress(&self, _processed: u64, _total: u64, _filename: Option<&str>) {}
     fn on_error(&self, _path: &Path, _error: &str) {}
+}
+
+/// Trie for efficient path matching
+struct PathTrie {
+    root: PathTrieNode,
+}
+
+#[derive(Default)]
+struct PathTrieNode {
+    children: HashMap<OsString, PathTrieNode>,
+    root_index: Option<usize>,
+}
+
+impl PathTrie {
+    fn new() -> Self {
+        Self { root: PathTrieNode::default() }
+    }
+
+    fn insert(&mut self, path: &Path, index: usize) {
+        let mut node = &mut self.root;
+        for component in path.components() {
+            if let Component::Normal(os_str) = component {
+                node = node.children.entry(os_str.to_owned()).or_default();
+            }
+        }
+        node.root_index = Some(index);
+    }
+
+    fn from_paths(paths: &[PathBuf]) -> Self {
+        let mut trie = Self::new();
+        for (i, path) in paths.iter().enumerate() {
+            trie.insert(path, i);
+        }
+        trie
+    }
+
+    fn find_best_match(&self, path: &Path) -> Option<usize> {
+        let mut node = &self.root;
+        let mut best_match = node.root_index;
+
+        for component in path.components() {
+            if let Component::Normal(os_str) = component {
+                if let Some(child) = node.children.get(os_str) {
+                    node = child;
+                    if node.root_index.is_some() {
+                        best_match = node.root_index;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+        best_match
+    }
 }
 
 /// Archive creator for building new archives
@@ -374,7 +427,6 @@ impl<'a> ArchiveCreator<'a> {
             tags,
             original_paths: Some(paths.to_vec()),
             path_mapping: mapping,
-            compression: self.compression_config.clone(),
         };
 
         let mut items = Vec::new();
@@ -382,16 +434,27 @@ impl<'a> ArchiveCreator<'a> {
 
         // Calculate total size for progress reporting
         let mut total_size = 0;
-        for path in paths {
+        let trie = PathTrie::from_paths(paths);
+
+        for (i, path) in paths.iter().enumerate() {
             for entry in WalkDir::new(path)
                 .follow_links(false)
                 .into_iter()
+                .filter_entry(|e| {
+                    // Check for overlapping roots using Trie
+                    if let Some(best_idx) = trie.find_best_match(e.path()) {
+                        if best_idx != i {
+                            return false;
+                        }
+                    }
+                    true
+                })
                 .filter_map(|e| e.ok())
             {
-                let relative_path = entry.path().strip_prefix(path).unwrap_or(entry.path());
+                let relative_path = make_relative_path(entry.path());
                 if !self
                     .exclusions
-                    .is_excluded(relative_path, entry.file_type().is_dir())
+                    .is_excluded(&relative_path, entry.file_type().is_dir())
                 {
                     if let Ok(meta) = entry.metadata() {
                         if meta.is_file() {
@@ -405,20 +468,18 @@ impl<'a> ArchiveCreator<'a> {
 
         // Process each path. If a mapping is provided, determine the mapping key (prefix)
         // for each root so item paths inside the archive are prefixed and remain unique.
-        for path in paths {
-            let root_prefix: Option<PathBuf> = metadata.path_mapping.as_ref().and_then(|m| {
-                m.iter()
-                    .find(|(_k, v)| v.as_path() == path)
-                    .map(|(k, _v)| k.clone())
-            });
+        for (i, path) in paths.iter().enumerate() {
+            let root_prefix = metadata.path_mapping.as_ref().and_then(|m| m.get(path));
 
             self.process_path(
                 path,
                 path,
-                root_prefix.as_ref(),
+                root_prefix,
                 &mut items,
                 &mut stats,
                 total_size,
+                &trie,
+                i,
             )
             .await?;
         }
@@ -449,16 +510,30 @@ impl<'a> ArchiveCreator<'a> {
         items: &mut Vec<ArchiveItem>,
         stats: &mut ArchiveStats,
         total_size: u64,
+        trie: &PathTrie,
+        root_index: usize,
     ) -> Result<()> {
         // Walk the directory tree and collect entries that are not excluded
         let entries: Vec<_> = WalkDir::new(path)
             .follow_links(false)
             .into_iter()
             .filter_entry(|e| {
-                let relative_path = e.path().strip_prefix(root).unwrap_or(e.path());
+                // Check for overlapping roots using Trie
+                if let Some(best_idx) = trie.find_best_match(e.path()) {
+                    if best_idx != root_index {
+                        return false;
+                    }
+                }
+
+                let relative_path = if let Some(prefix) = root_prefix {
+                    prefix.join(e.path().strip_prefix(root).unwrap_or(e.path()))
+                } else {
+                    make_relative_path(e.path())
+                };
+
                 let is_excluded = self
                     .exclusions
-                    .is_excluded(relative_path, e.file_type().is_dir());
+                    .is_excluded(&relative_path, e.file_type().is_dir());
                 if is_excluded {
                     self.progress.on_file_skipped(e.path(), "excluded");
                     false
@@ -484,10 +559,11 @@ impl<'a> ArchiveCreator<'a> {
             };
 
             let entry_path = entry.path();
-            let relative_path = entry_path
-                .strip_prefix(root)
-                .unwrap_or(entry_path)
-                .to_path_buf();
+            let relative_path = if let Some(prefix) = root_prefix {
+                prefix.join(entry_path.strip_prefix(root).unwrap_or(entry_path))
+            } else {
+                make_relative_path(entry_path)
+            };
 
             let meta = match entry.metadata() {
                 Ok(m) => m,
@@ -616,6 +692,13 @@ impl<'a> ArchiveCreator<'a> {
             }
         }
     }
+}
+
+/// Helper to make a path relative by stripping root/prefix components
+fn make_relative_path(path: &Path) -> PathBuf {
+    path.components()
+        .filter(|c| matches!(c, Component::Normal(_)))
+        .collect()
 }
 
 /// Progress callback for restore operations
@@ -978,7 +1061,6 @@ impl<'a> ArchiveRestorer<'a> {
                     tags: None,
                     original_paths: None,
                     path_mapping: None,
-                    compression: None,
                 },
                 items: v1.items.into_iter().map(convert_item).collect(),
                 stats: v1.stats,
@@ -1211,7 +1293,6 @@ mod tests {
             tags: Some(vec!["tag1".to_string(), "tag2".to_string()]),
             original_paths: Some(vec![PathBuf::from("/tmp/test")]),
             path_mapping: None,
-            compression: None,
         };
 
         let archive = Archive {

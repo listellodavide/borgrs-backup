@@ -6,6 +6,7 @@ pub use turso::{Builder, Connection, Database as TursoDatabase, Row, Value};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoBookmark {
     pub id: Option<i64>,
+    pub uuid: String,
     pub name: String,
     pub path: String,
     pub repo_type: String,
@@ -97,6 +98,7 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS repo_bookmarks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT NOT NULL DEFAULT '',
                 name TEXT NOT NULL UNIQUE,
                 path TEXT NOT NULL,
                 repo_type TEXT NOT NULL DEFAULT 'local'
@@ -104,6 +106,10 @@ impl Database {
             (),
         )
         .await?;
+
+        // Migration: Ensure uuid column exists for existing tables
+        // This is a simple check, in production we'd use a proper migration system
+        let _ = conn.execute("ALTER TABLE repo_bookmarks ADD COLUMN uuid TEXT NOT NULL DEFAULT ''", ()).await;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS archive_bookmarks (
@@ -192,8 +198,9 @@ impl Database {
     pub async fn add_repo(&self, repo: &RepoBookmark) -> Result<()> {
         let conn = self.connect().await?;
         conn.execute(
-            "INSERT INTO repo_bookmarks (name, path, repo_type) VALUES (?, ?, ?)",
+            "INSERT INTO repo_bookmarks (uuid, name, path, repo_type) VALUES (?, ?, ?, ?)",
             (
+                repo.uuid.as_str(),
                 repo.name.as_str(),
                 repo.path.as_str(),
                 repo.repo_type.as_str(),
@@ -206,16 +213,18 @@ impl Database {
     pub async fn list_repos(&self) -> Result<Vec<RepoBookmark>> {
         let conn = self.connect().await?;
         let mut rows = conn
-            .query("SELECT id, name, path, repo_type FROM repo_bookmarks", ())
+            .query("SELECT id, uuid, name, path, repo_type FROM repo_bookmarks", ())
             .await?;
         let mut result = Vec::new();
         while let Some(row) = rows.next().await? {
             let id: i64 = row.get::<i64>(0)?;
-            let name: String = row.get::<String>(1)?;
-            let path: String = row.get::<String>(2)?;
-            let repo_type: String = row.get::<String>(3)?;
+            let uuid: String = row.get::<String>(1)?;
+            let name: String = row.get::<String>(2)?;
+            let path: String = row.get::<String>(3)?;
+            let repo_type: String = row.get::<String>(4)?;
             result.push(RepoBookmark {
                 id: Some(id),
+                uuid,
                 name,
                 path,
                 repo_type,
@@ -599,6 +608,7 @@ mod tests {
 
         let repo = RepoBookmark {
             id: None,
+            uuid: "test-uuid".to_string(),
             name: "test_repo".to_string(),
             path: "/tmp/test".to_string(),
             repo_type: "local".to_string(),
@@ -608,6 +618,7 @@ mod tests {
         let repos = db.list_repos().await?;
         assert_eq!(repos.len(), 1);
         assert_eq!(repos[0].name, "test_repo");
+        assert_eq!(repos[0].uuid, "test-uuid");
 
         db.delete_repo("test_repo").await?;
         let repos = db.list_repos().await?;
@@ -623,6 +634,7 @@ mod tests {
 
         let repo = RepoBookmark {
             id: None,
+            uuid: "test-uuid".to_string(),
             name: "unique_repo".to_string(),
             path: "/tmp/unique".to_string(),
             repo_type: "local".to_string(),

@@ -3,6 +3,7 @@ pub mod cache;
 pub mod catalog;
 pub mod chunker;
 pub mod compression;
+pub mod credentials;
 pub mod crypto;
 pub mod db;
 pub mod error;

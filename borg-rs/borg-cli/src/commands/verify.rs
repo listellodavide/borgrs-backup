@@ -256,8 +256,6 @@ fn print_archive_verify_report(report: &ArchiveVerifyReport) {
 /// Report from restore testing
 #[derive(Debug)]
 struct RestoreTestReport {
-    /// Archive name tested
-    archive_name: String,
     /// Number of files sampled
     files_sampled: usize,
     /// Number of files successfully restored
@@ -323,7 +321,6 @@ async fn run_restore_test(
     let success = errors.is_empty() && files_restored == files_sampled;
 
     Ok(RestoreTestReport {
-        archive_name: archive_name.to_string(),
         files_sampled,
         files_restored,
         bytes_restored,

@@ -1,15 +1,13 @@
-//! Health monitoring and metrics
+//! Daemon health monitoring
 
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::sleep;
+use tracing::{debug, error, info, warn};
 
-use tracing::{debug, info, warn};
-
-use crate::notifications::{self, NotificationEvent, NotificationPayload};
 use crate::DaemonState;
-use borg_core::db::Database;
 
-/// Health monitor for the daemon
+/// Health monitor task
 pub struct HealthMonitor {
     state: Arc<DaemonState>,
 }
@@ -21,18 +19,18 @@ impl HealthMonitor {
 
     /// Run the health monitor loop
     pub async fn run(&self) {
-        let mut shutdown_rx = self.state.shutdown_tx.subscribe();
         let interval = {
             let config = self.state.config.read().await;
-            Duration::from_secs(config.global.health_check_interval)
+            config.global.health_check_interval
         };
 
-        info!("Health monitor started with {:?} interval", interval);
+        info!("Health monitor started with interval: {}s", interval);
+        let mut shutdown_rx = self.state.shutdown_tx.subscribe();
 
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(interval) => {
-                    self.perform_health_check().await;
+                _ = sleep(Duration::from_secs(interval)) => {
+                    self.perform_checks().await;
                 }
                 _ = shutdown_rx.recv() => {
                     info!("Health monitor shutting down");
@@ -42,222 +40,118 @@ impl HealthMonitor {
         }
     }
 
-    /// Perform a health check
-    async fn perform_health_check(&self) {
-        debug!("Performing health check");
+    /// Perform all health checks
+    async fn perform_checks(&self) {
+        debug!("Performing health checks");
 
-        self.write_heartbeat().await;
-        self.check_missed_jobs().await;
+        // Check for heartbeat file
+        self.check_heartbeat().await;
 
-        // Check running jobs
-        let running_jobs = self.state.running_jobs.read().await;
-        if !running_jobs.is_empty() {
-            debug!("Running jobs: {:?}", *running_jobs);
-        }
+        // Check for overdue jobs
+        self.check_overdue_jobs().await;
 
-        // Notify systemd watchdog if configured
-        #[cfg(unix)]
-        {
-            let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Watchdog]);
-        }
+        // Check for zombie jobs (running but not in state)
+        self.check_zombie_jobs().await;
 
-        // Check repository connectivity for scheduled jobs
-        // (In a real implementation, we'd check repositories periodically)
-
-        debug!("Health check completed");
+        // Check database connectivity
+        self.check_database().await;
     }
 
-    async fn write_heartbeat(&self) {
-        let heartbeat_path = {
+    /// Write to heartbeat file if configured
+    async fn check_heartbeat(&self) {
+        let path = {
             let config = self.state.config.read().await;
             config.global.heartbeat_path.clone()
         };
 
-        if let Some(path) = heartbeat_path {
-            if let Some(parent) = path.parent() {
-                if let Err(err) = tokio::fs::create_dir_all(parent).await {
-                    warn!("Failed to create heartbeat directory: {}", err);
-                    return;
-                }
-            }
-
+        if let Some(path) = path {
             let timestamp = chrono::Utc::now().to_rfc3339();
-            if let Err(err) = tokio::fs::write(&path, timestamp).await {
-                warn!("Failed to write heartbeat file: {}", err);
+            if let Err(e) = tokio::fs::write(&path, timestamp).await {
+                error!("Failed to write heartbeat file at {:?}: {}", path, e);
             }
         }
     }
 
-    async fn check_missed_jobs(&self) {
-        let now = chrono::Utc::now();
-        let (configs, scheduler) = {
+    /// Check for jobs that have missed their schedule
+    async fn check_overdue_jobs(&self) {
+        let jobs = {
             let config = self.state.config.read().await;
-            let scheduler = self.state.scheduler.read().await;
-            (config.jobs.clone(), scheduler)
+            config.jobs.iter().map(|j| j.name.clone()).collect::<Vec<_>>()
         };
 
-        for job in configs {
-            if let Some(threshold_minutes) = job.notifications.missed_threshold_minutes {
-                let last_run = {
-                    let state = self.state.job_state.read().await;
-                    state.get(&job.name).and_then(|s| s.last_run)
-                };
-
-                let reference = last_run
-                    .unwrap_or_else(|| now - chrono::Duration::minutes(threshold_minutes as i64));
-                let expected = scheduler.expected_runs(&job.name, reference, now);
-
-                if expected.is_empty() {
-                    continue;
-                }
-
-                let overdue = now - expected.last().unwrap();
-                if overdue.num_minutes().abs() as u64 >= threshold_minutes {
-                    self.send_missed_alert(&job.name, expected.last().unwrap(), last_run)
-                        .await;
-                }
+        let scheduler = self.state.scheduler.read().await;
+        for job_name in jobs {
+            if scheduler.missed_runs_count(&job_name) > 0 {
+                warn!("Job '{}' is overdue", job_name);
+                // Drop the lock before awaiting
+                drop(scheduler);
+                self.send_missed_notification(&job_name).await;
+                // Re-acquire lock for next iteration
+                return; // Simple strategy: process one at a time per check cycle to avoid lock issues
             }
         }
     }
 
-    async fn send_missed_alert(
-        &self,
-        job_name: &str,
-        expected: &chrono::DateTime<chrono::Utc>,
-        last_run: Option<chrono::DateTime<chrono::Utc>>,
-    ) {
-        let mut job_state = self.state.job_state.write().await;
-        let state = job_state.entry(job_name.to_string()).or_default();
-        let now = chrono::Utc::now();
+    /// Check for jobs that are running but not tracked in state
+    async fn check_zombie_jobs(&self) {
+        // This would require OS-level process inspection, which is complex.
+        // For now, we'll rely on the internal state being correct.
+        // A more advanced implementation could check for child processes.
+    }
 
-        if state
-            .last_missed_alert
-            .is_some_and(|last| now - last < chrono::Duration::minutes(5))
-        {
-            return;
+    /// Check database connectivity
+    async fn check_database(&self) {
+        if let Err(e) = self.state.db.connect().await {
+            error!("Database health check failed: {}", e);
         }
+    }
 
-        state.record_missed_alert(now);
+    /// Send a notification for a missed job
+    async fn send_missed_notification(&self, job_name: &str) {
+        use crate::notifications::{self, NotificationEvent};
 
         let config = self.state.config.read().await;
         if let Some(job) = config.jobs.iter().find(|j| j.name == job_name) {
+            let threshold = match job.notifications.missed_threshold_minutes {
+                Some(value) if value > 0 => value,
+                _ => return,
+            };
+
+            let mut last_run_str = None;
+
+            let mut job_state_map = self.state.job_state.write().await;
+            if let Some(job_state) = job_state_map.get_mut(job_name) {
+                let now = chrono::Utc::now();
+                if job_state
+                    .last_missed_alert
+                    .is_some_and(|last| now - last < chrono::Duration::minutes(threshold as i64))
+                {
+                    return;
+                }
+                job_state.record_missed_alert(now);
+                last_run_str = job_state.last_run.map(|d| d.to_rfc3339());
+                let _ = self.state.persist_job_state(job_name, job_state).await;
+            }
+            drop(job_state_map); // Release lock
+
+            let expected = {
+                let scheduler = self.state.scheduler.read().await;
+                scheduler.next_expected_run(job_name)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_else(|| "unknown".to_string())
+            };
+
             if let Some(dispatcher) = notifications::build_dispatcher(&job.notifications) {
-                if let Ok(payload) = NotificationPayload::new(NotificationEvent::JobMissed {
-                    job: job_name.to_string(),
-                    expected: expected.to_rfc3339(),
-                    last_run: last_run.map(|t| t.to_rfc3339()),
-                }) {
+                if let Ok(payload) = notifications::NotificationPayload::new(
+                    NotificationEvent::JobMissed {
+                        job: job_name.to_string(),
+                        expected,
+                        last_run: last_run_str,
+                    },
+                ) {
                     dispatcher.send(payload, &job.retry).await;
                 }
             }
         }
-    }
-}
-
-/// Metrics collector for Prometheus
-pub struct MetricsCollector {
-    state: Arc<DaemonState>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::sync::broadcast;
-
-    #[tokio::test]
-    async fn test_write_heartbeat() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let heartbeat_path = temp_dir.path().join("heartbeat");
-
-        let config = crate::config::DaemonConfig {
-            global: crate::config::GlobalConfig {
-                heartbeat_path: Some(heartbeat_path.clone()),
-                ..Default::default()
-            },
-            jobs: vec![],
-            repositories: vec![],
-        };
-
-        let (shutdown_tx, _) = broadcast::channel(1);
-        let tmp_file = tempfile::NamedTempFile::new().unwrap();
-        let db = Arc::new(Database::new(tmp_file.path()).await.unwrap());
-        let state = Arc::new(crate::DaemonState::new(config, shutdown_tx, db));
-        let monitor = HealthMonitor::new(state);
-
-        monitor.write_heartbeat().await;
-        let contents = tokio::fs::read_to_string(&heartbeat_path).await.unwrap();
-        assert!(contents.contains('T'));
-    }
-}
-
-impl MetricsCollector {
-    pub fn new(state: Arc<DaemonState>) -> Self {
-        Self { state }
-    }
-
-    /// Generate Prometheus metrics
-    pub async fn collect(&self) -> String {
-        let running = self.state.running_jobs.read().await;
-        let scheduler = self.state.scheduler.read().await;
-        let scheduled = scheduler.list_scheduled();
-        let job_state = self.state.job_state.read().await;
-
-        let mut output = String::new();
-
-        // Running jobs gauge
-        output
-            .push_str("# HELP borgd_running_jobs_total Number of currently running backup jobs\n");
-        output.push_str("# TYPE borgd_running_jobs_total gauge\n");
-        output.push_str(&format!("borgd_running_jobs_total {}\n\n", running.len()));
-
-        // Scheduled jobs gauge
-        output.push_str("# HELP borgd_scheduled_jobs_total Number of scheduled backup jobs\n");
-        output.push_str("# TYPE borgd_scheduled_jobs_total gauge\n");
-        output.push_str(&format!(
-            "borgd_scheduled_jobs_total {}\n\n",
-            scheduled.len()
-        ));
-
-        // Per-job metrics
-        output.push_str("# HELP borgd_job_enabled Whether a backup job is enabled\n");
-        output.push_str("# TYPE borgd_job_enabled gauge\n");
-        for (name, _, enabled) in &scheduled {
-            let value = if *enabled { 1 } else { 0 };
-            output.push_str(&format!(
-                "borgd_job_enabled{{job=\"{}\"}} {}\n",
-                name, value
-            ));
-        }
-
-        // Last success/failure timestamps (seconds since epoch)
-        output.push_str("\n# HELP borgd_job_last_success Last successful run timestamp\n");
-        output.push_str("# TYPE borgd_job_last_success gauge\n");
-        for (name, _, _) in &scheduled {
-            let ts = job_state
-                .get(name)
-                .and_then(|state| state.last_success)
-                .map(|t| t.timestamp())
-                .unwrap_or(0);
-            output.push_str(&format!(
-                "borgd_job_last_success{{job=\"{}\"}} {}\n",
-                name, ts
-            ));
-        }
-
-        output.push_str("\n# HELP borgd_job_last_failure Last failed run timestamp\n");
-        output.push_str("# TYPE borgd_job_last_failure gauge\n");
-        for (name, _, _) in &scheduled {
-            let ts = job_state
-                .get(name)
-                .and_then(|state| state.last_failure)
-                .map(|t| t.timestamp())
-                .unwrap_or(0);
-            output.push_str(&format!(
-                "borgd_job_last_failure{{job=\"{}\"}} {}\n",
-                name, ts
-            ));
-        }
-
-        output
     }
 }

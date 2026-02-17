@@ -12,7 +12,7 @@ pub use borg_core::archive::{BackupProgress, RestoreProgress};
 use borg_core::compression::CompressionAlgorithm;
 use borg_core::compression::CompressionConfig;
 use chrono::{Local, TimeZone};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub fn generate_managed_archive_name() -> String {
@@ -64,7 +64,7 @@ pub async fn create_archive(
 
     let path_bufs: Vec<PathBuf> = paths
         .iter()
-        .map(|p| Path::new(p).canonicalize().unwrap())
+        .map(|p| Path::new(p).canonicalize().unwrap_or_else(|_| PathBuf::from(p)))
         .collect();
 
     // Parse compression
@@ -86,13 +86,26 @@ pub async fn create_archive(
         }
     };
 
-    // Build path mapping. The goal is to preserve the hierarchical structure
-    // of the input paths within the archive.
+    // Build path mapping from source path -> desired archive prefix.
+    // This allows the core to efficiently look up the prefix for each root.
+    // We handle duplicate directory names by appending a counter.
     let mut mapping = HashMap::new();
+    let mut used_names = HashSet::new();
+
     for p in &path_bufs {
-        // The archive path should be the same as the input path's file name.
-        if let Some(name) = p.file_name() {
-            mapping.insert(PathBuf::from(name), p.clone());
+        if let Some(name_os) = p.file_name() {
+            let name_str = name_os.to_string_lossy();
+            let mut name = name_str.to_string();
+            let mut counter = 1;
+
+            while used_names.contains(&name) {
+                name = format!("{}_{}", name_str, counter);
+                counter += 1;
+            }
+
+            used_names.insert(name.clone());
+            // Map: source_path -> archive_prefix
+            mapping.insert(p.clone(), PathBuf::from(name));
         }
     }
 

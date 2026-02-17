@@ -7,7 +7,7 @@
 
 use crate::chunker::{Chunk, ChunkId};
 use crate::compression::{CompressedData, CompressionConfig, Compressor};
-use crate::crypto::{CryptoProvider, EncryptedData, RepositoryKey};
+use crate::crypto::{CryptoProvider, EncryptedData, RepositoryKey, EncryptionKey};
 use crate::error::{BorgError, Result};
 use crate::metadata::{EntryKind, RepositoryStats, Snapshot, Tree};
 use crate::recovery::{RecoveryCodec, RecoveryProfile};
@@ -98,6 +98,8 @@ pub trait StorageEngine: Send + Sync {
     async fn put_recovery(&self, id: &ChunkId, data: &[u8]) -> Result<()>;
     /// Read recovery data
     async fn get_recovery(&self, id: &ChunkId) -> Result<Vec<u8>>;
+    /// Write the repository key
+    async fn write_key(&self, data: &[u8]) -> Result<()>;
 }
 
 /// ObjectLog V1 Engine
@@ -294,6 +296,13 @@ impl StorageEngine for ObjectLogV1 {
             .map_err(|e| BorgError::Repository(e.to_string()))?;
         Ok(data.to_vec())
     }
+
+    async fn write_key(&self, data: &[u8]) -> Result<()> {
+        self.op
+            .write("key", data.to_vec())
+            .await
+            .map_err(|e| BorgError::Repository(e.to_string()))
+    }
 }
 
 /// Repository handle
@@ -339,9 +348,7 @@ impl Repository {
             let key_data = serde_json::to_string_pretty(&repo_key)
                 .map_err(|e| BorgError::Serialization(e.to_string()))?;
 
-            op.write("key", key_data)
-                .await
-                .map_err(|e| BorgError::Repository(e.to_string()))?;
+            engine.write_key(key_data.as_bytes()).await?;
 
             Some(CryptoProvider::new(enc_key))
         } else {
@@ -384,17 +391,20 @@ impl Repository {
         let descriptor = engine.load_descriptor().await?;
 
         let crypto = if descriptor.encrypted {
-            let passphrase = passphrase.ok_or(BorgError::InvalidPassphrase)?;
+            if let Some(pass) = passphrase {
+                let key_data = op
+                    .read("key")
+                    .await
+                    .map_err(|e| BorgError::Repository(e.to_string()))?;
+                let repo_key: RepositoryKey = serde_json::from_slice(&key_data.to_vec())
+                    .map_err(|e| BorgError::Deserialization(e.to_string()))?;
 
-            let key_data = op
-                .read("key")
-                .await
-                .map_err(|e| BorgError::Repository(e.to_string()))?;
-            let repo_key: RepositoryKey = serde_json::from_slice(&key_data.to_vec())
-                .map_err(|e| BorgError::Deserialization(e.to_string()))?;
-
-            let enc_key = repo_key.decrypt(passphrase)?;
-            Some(CryptoProvider::new(enc_key))
+                let enc_key = repo_key.decrypt(pass)?;
+                Some(CryptoProvider::new(enc_key))
+            } else {
+                warn!("Opening encrypted repository without passphrase - read/write operations will fail");
+                None
+            }
         } else {
             None
         };
@@ -423,6 +433,36 @@ impl Repository {
         })
     }
 
+    /// Export the raw repository key (unencrypted).
+    /// This should only be used for recovery purposes and the output must be handled securely.
+    pub fn export_key(&self) -> Result<Vec<u8>> {
+        if let Some(crypto) = &self.crypto {
+            Ok(crypto.key().to_bytes())
+        } else {
+            Err(BorgError::Repository("Repository is not encrypted or key not loaded".to_string()))
+        }
+    }
+
+    /// Import a raw repository key and re-encrypt it with a new passphrase.
+    /// This is a recovery operation.
+    pub async fn import_key(&mut self, key_bytes: &[u8], new_passphrase: &str) -> Result<()> {
+        if !self.descriptor.encrypted {
+            return Err(BorgError::Repository("Repository is not encrypted".to_string()));
+        }
+
+        let key = EncryptionKey::from_bytes(key_bytes)?;
+        let new_repo_key = RepositoryKey::wrap(&key, new_passphrase)?;
+        let new_key_data = serde_json::to_string_pretty(&new_repo_key)
+            .map_err(|e| BorgError::Serialization(e.to_string()))?;
+
+        self.engine.write_key(new_key_data.as_bytes()).await?;
+
+        // Update in-memory crypto provider
+        self.crypto = Some(CryptoProvider::new(key));
+
+        Ok(())
+    }
+
     /// Set the compressor to use for subsequent operations
     pub fn set_compressor(&mut self, compressor: Compressor) {
         self.compressor = compressor;
@@ -441,12 +481,16 @@ impl Repository {
 
         let compressed = self.compressor.compress(&chunk.data)?;
 
-        let data_to_store = if let Some(ref crypto) = self.crypto {
-            let encrypted = crypto.encrypt(
-                &bincode::serialize(&compressed)
-                    .map_err(|e| BorgError::Serialization(e.to_string()))?,
-            )?;
-            bincode::serialize(&encrypted).map_err(|e| BorgError::Serialization(e.to_string()))?
+        let data_to_store = if self.descriptor.encrypted {
+            if let Some(ref crypto) = self.crypto {
+                let encrypted = crypto.encrypt(
+                    &bincode::serialize(&compressed)
+                        .map_err(|e| BorgError::Serialization(e.to_string()))?,
+                )?;
+                bincode::serialize(&encrypted).map_err(|e| BorgError::Serialization(e.to_string()))?
+            } else {
+                return Err(BorgError::Repository("Repository is encrypted but no key loaded".to_string()));
+            }
         } else {
             bincode::serialize(&compressed).map_err(|e| BorgError::Serialization(e.to_string()))?
         };
@@ -473,12 +517,16 @@ impl Repository {
     pub async fn get_chunk(&self, id: &ChunkId) -> Result<Chunk> {
         let stored_data = self.engine.get_object(id).await?;
 
-        let compressed: CompressedData = if let Some(ref crypto) = self.crypto {
-            let encrypted: EncryptedData = bincode::deserialize(&stored_data.to_vec())
-                .map_err(|e| BorgError::Deserialization(e.to_string()))?;
-            let decrypted = crypto.decrypt(&encrypted)?;
-            bincode::deserialize(&decrypted)
-                .map_err(|e| BorgError::Deserialization(e.to_string()))?
+        let compressed: CompressedData = if self.descriptor.encrypted {
+            if let Some(ref crypto) = self.crypto {
+                let encrypted: EncryptedData = bincode::deserialize(&stored_data.to_vec())
+                    .map_err(|e| BorgError::Deserialization(e.to_string()))?;
+                let decrypted = crypto.decrypt(&encrypted)?;
+                bincode::deserialize(&decrypted)
+                    .map_err(|e| BorgError::Deserialization(e.to_string()))?
+            } else {
+                return Err(BorgError::Repository("Repository is encrypted but no key loaded".to_string()));
+            }
         } else {
             bincode::deserialize(&stored_data.to_vec())
                 .map_err(|e| BorgError::Deserialization(e.to_string()))?
@@ -498,12 +546,16 @@ impl Repository {
                 let parity = self.engine.get_recovery(id).await?;
                 let recovered_data = codec.reconstruct(&stored_data, &parity)?;
 
-                let compressed: CompressedData = if let Some(ref crypto) = self.crypto {
-                    let encrypted: EncryptedData = bincode::deserialize(&recovered_data)
-                        .map_err(|e| BorgError::Deserialization(e.to_string()))?;
-                    let decrypted = crypto.decrypt(&encrypted)?;
-                    bincode::deserialize(&decrypted)
-                        .map_err(|e| BorgError::Deserialization(e.to_string()))?
+                let compressed: CompressedData = if self.descriptor.encrypted {
+                    if let Some(ref crypto) = self.crypto {
+                        let encrypted: EncryptedData = bincode::deserialize(&recovered_data)
+                            .map_err(|e| BorgError::Deserialization(e.to_string()))?;
+                        let decrypted = crypto.decrypt(&encrypted)?;
+                        bincode::deserialize(&decrypted)
+                            .map_err(|e| BorgError::Deserialization(e.to_string()))?
+                    } else {
+                        return Err(BorgError::Repository("Repository is encrypted but no key loaded".to_string()));
+                    }
                 } else {
                     bincode::deserialize(&recovered_data)
                         .map_err(|e| BorgError::Deserialization(e.to_string()))?

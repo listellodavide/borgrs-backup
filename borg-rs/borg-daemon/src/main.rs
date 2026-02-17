@@ -17,7 +17,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
+use borg_core::credentials;
 use borg_core::db::{Database, JobExecutionHistory, JobState as DbJobState};
 use config::DaemonConfig;
 use health::HealthMonitor;
@@ -438,9 +440,37 @@ async fn execute_job(state: &Arc<DaemonState>, job_name: &str) -> Result<()> {
             .context("Job not found")?
     };
 
+    // Get password from keyring
+    let password = {
+        let repos = state.db.list_repos().await?;
+        let repo_bookmark = repos.iter().find(|r| r.path == job_config.repository);
+
+        if let Some(bookmark) = repo_bookmark {
+            if let Ok(uuid) = Uuid::parse_str(&bookmark.uuid) {
+                match credentials::get_password(&uuid) {
+                    Ok(pass) => Some(pass),
+                    Err(e) => {
+                        warn!("Failed to get password from keyring for repo {}: {}", bookmark.name, e);
+                        None
+                    }
+                }
+            } else {
+                warn!("Invalid UUID for repo {}", bookmark.name);
+                None
+            }
+        } else {
+            warn!("No repository bookmark found for path: {}", job_config.repository);
+            None
+        }
+    };
+
+    if password.is_none() {
+        warn!("No repository password found on Keyring for job '{}'.", job_name);
+    }
+
     let start_time = chrono::Utc::now();
     // Execute backup
-    let result = job::run_backup_job(&job_config).await;
+    let result = job::run_backup_job(&job_config, password).await;
     let end_time = chrono::Utc::now();
 
     // Remove from running jobs

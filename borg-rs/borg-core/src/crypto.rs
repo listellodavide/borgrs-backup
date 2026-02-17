@@ -311,6 +311,20 @@ impl RepositoryKey {
         ))
     }
 
+    /// Wrap an existing key with a new passphrase
+    pub fn wrap(key: &EncryptionKey, passphrase: &str) -> Result<Self> {
+        let salt = KeySalt::generate();
+        let passphrase_crypto = CryptoProvider::from_passphrase(passphrase, &salt)?;
+        let encrypted_key = passphrase_crypto.encrypt(&key.to_bytes())?;
+
+        Ok(Self {
+            version: 1,
+            salt,
+            encrypted_key,
+            iterations: 3,
+        })
+    }
+
     /// Decrypt the repository key using the passphrase
     pub fn decrypt(&self, passphrase: &str) -> Result<EncryptionKey> {
         let passphrase_crypto = CryptoProvider::from_passphrase(passphrase, &self.salt)?;

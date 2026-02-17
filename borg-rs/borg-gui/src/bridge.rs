@@ -6,6 +6,7 @@ use crate::{ArchiveContentLogic, ArchiveEntry, ArchiveFilesLogic, SchedulerLogic
 use slint::{ComponentHandle, Model, SharedString};
 use std::path::Path;
 use super::scheduler_bridge;
+use uuid::Uuid;
 
 struct GuiBackupProgress {
     window_weak: slint::Weak<MainWindow>,
@@ -200,7 +201,7 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 window.global::<AppState>().set_show_password_dialog(false);
                 
                 let dashboard = window.global::<DashboardLogic>();
-                let active_index = dashboard.get_active_repo_index();
+                let _active_index = dashboard.get_active_repo_index();
                 
                 let repo_path = {
                     let app = window.global::<AppState>();
@@ -960,6 +961,7 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                                         tokio::spawn(async move {
                                             let _ = crate::app_state::BorgAppState::add_bookmark_async(state_arc_2, RepoBookmark {
                                                 id: None,
+                                                uuid: Uuid::new_v4().to_string(),
                                                 name: repo_name_c_spawn,
                                                 path: path_url_c_spawn,
                                                 repo_type: repo_type_c_2,
@@ -1266,4 +1268,3 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
         }
     });
 }
-

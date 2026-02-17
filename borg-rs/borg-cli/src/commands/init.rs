@@ -108,37 +108,6 @@ pub async fn run(cli: &Cli, args: &InitArgs) -> Result<()> {
     Ok(())
 }
 
-/// Parse human-readable size string (e.g., "100G", "500M")
-fn parse_size(s: &str) -> Result<u64> {
-    let s = s.trim();
-    let (num, unit) = if s.chars().last().map(|c| c.is_alphabetic()).unwrap_or(false) {
-        let idx = s.len() - 1;
-        let unit_str = &s[idx..];
-        // Check for two-char units like "GB"
-        if s.len() > 1 && s.chars().nth(s.len() - 2).map(|c| c.is_alphabetic()).unwrap_or(false) {
-            (&s[..s.len()-2], &s[s.len()-2..])
-        } else {
-            (&s[..idx], unit_str)
-        }
-    } else {
-        (s, "")
-    };
-
-    let num: u64 = num.parse()
-        .context("Invalid size number")?;
-
-    let multiplier: u64 = match unit.to_uppercase().as_str() {
-        "" | "B" => 1,
-        "K" | "KB" | "KIB" => 1024,
-        "M" | "MB" | "MIB" => 1024 * 1024,
-        "G" | "GB" | "GIB" => 1024 * 1024 * 1024,
-        "T" | "TB" | "TIB" => 1024 * 1024 * 1024 * 1024,
-        other => anyhow::bail!("Unknown size unit: {}", other),
-    };
-
-    Ok(num * multiplier)
-}
-
 pub fn normalize_webdav_url(
     value: &str,
     scheme: &str,
@@ -186,16 +155,6 @@ pub fn normalize_webdav_url(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_size() {
-        assert_eq!(parse_size("100").unwrap(), 100);
-        assert_eq!(parse_size("100B").unwrap(), 100);
-        assert_eq!(parse_size("1K").unwrap(), 1024);
-        assert_eq!(parse_size("1KB").unwrap(), 1024);
-        assert_eq!(parse_size("100M").unwrap(), 100 * 1024 * 1024);
-        assert_eq!(parse_size("10G").unwrap(), 10 * 1024 * 1024 * 1024);
-    }
 
     #[test]
     fn test_normalize_webdav_url_credentials() {

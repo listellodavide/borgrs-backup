@@ -54,6 +54,7 @@ ntp-client = "0.1.0"
 reed-solomon-erasure = "6.0"
 crc32fast = "1.3"
 cron = "0.11"
+keyring = "2.3"
 
 [dev-dependencies]
 httpmock.workspace = true

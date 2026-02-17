@@ -1,10 +1,9 @@
 pub use borg_core::db::{ArchiveBookmark, Database, RepoBookmark, ScheduledTask};
 pub use borg_core::scheduler::{BackupSchedule, ScheduleType};
-use keyring::Entry;
+use borg_core::credentials;
 use std::collections::HashMap;
 use std::sync::Arc;
-
-const KEYRING_SERVICE: &str = "borg-gui";
+use uuid::Uuid;
 
 #[derive(Debug, Default)]
 pub struct BorgAppState {
@@ -41,16 +40,24 @@ impl BorgAppState {
 
     pub async fn add_bookmark(
         &mut self,
-        bookmark: RepoBookmark,
+        mut bookmark: RepoBookmark,
         password: Option<String>,
     ) -> anyhow::Result<()> {
         if let Some(db) = &self.db {
+            // Generate UUID if not present (though it should be handled by caller usually)
+            if bookmark.uuid.is_empty() {
+                bookmark.uuid = Uuid::new_v4().to_string();
+            }
+
             db.add_repo(&bookmark).await?;
             self.bookmarks = db.list_repos().await?;
             if let Some(pwd) = password {
                 self.session_passwords
                     .insert(bookmark.path.clone(), pwd.clone());
-                let _ = self.store_password(&bookmark.name, &pwd);
+
+                if let Ok(uuid) = Uuid::parse_str(&bookmark.uuid) {
+                    let _ = credentials::store_password(&uuid, &pwd);
+                }
             }
         }
         Ok(())
@@ -58,15 +65,26 @@ impl BorgAppState {
 
     pub async fn delete_bookmark(&mut self, name: &str) -> anyhow::Result<()> {
         if let Some(db) = &self.db {
+            // Find the bookmark to get its UUID before deleting
+            let uuid_str = self.bookmarks.iter()
+                .find(|b| b.name == name)
+                .map(|b| b.uuid.clone());
+
             db.delete_repo(name).await?;
             self.bookmarks = db.list_repos().await?;
+
+            if let Some(uuid_str) = uuid_str {
+                if let Ok(uuid) = Uuid::parse_str(&uuid_str) {
+                    let _ = credentials::delete_password(&uuid);
+                }
+            }
         }
         Ok(())
     }
 
     pub async fn add_bookmark_async(
         state: Arc<std::sync::Mutex<Self>>,
-        bookmark: RepoBookmark,
+        mut bookmark: RepoBookmark,
         password: Option<String>,
     ) -> anyhow::Result<()> {
         let db = {
@@ -75,6 +93,10 @@ impl BorgAppState {
         };
 
         if let Some(db) = db {
+            if bookmark.uuid.is_empty() {
+                bookmark.uuid = Uuid::new_v4().to_string();
+            }
+
             db.add_repo(&bookmark).await?;
             let repos = db.list_repos().await?;
             let mut s = state.lock().unwrap();
@@ -82,7 +104,10 @@ impl BorgAppState {
             if let Some(pwd) = password {
                 s.session_passwords
                     .insert(bookmark.path.clone(), pwd.clone());
-                let _ = s.store_password(&bookmark.name, &pwd);
+
+                if let Ok(uuid) = Uuid::parse_str(&bookmark.uuid) {
+                    let _ = credentials::store_password(&uuid, &pwd);
+                }
             }
         }
         Ok(())
@@ -92,15 +117,25 @@ impl BorgAppState {
         state: Arc<std::sync::Mutex<Self>>,
         name: &str,
     ) -> anyhow::Result<()> {
-        let db = {
+        let (db, uuid_str) = {
             let s = state.lock().unwrap();
-            s.db.clone()
+            let uuid = s.bookmarks.iter()
+                .find(|b| b.name == name)
+                .map(|b| b.uuid.clone());
+            (s.db.clone(), uuid)
         };
+
         if let Some(db) = db {
             db.delete_repo(name).await?;
             let repos = db.list_repos().await?;
             let mut s = state.lock().unwrap();
             s.bookmarks = repos;
+
+            if let Some(uuid_str) = uuid_str {
+                if let Ok(uuid) = Uuid::parse_str(&uuid_str) {
+                    let _ = credentials::delete_password(&uuid);
+                }
+            }
         }
         Ok(())
     }
@@ -191,16 +226,25 @@ impl BorgAppState {
     }
 
     pub fn store_password(&self, repo_name: &str, password: &str) -> anyhow::Result<()> {
-        let account = format!("borgrs_{}", repo_name);
-        let entry = Entry::new(KEYRING_SERVICE, &account)?;
-        entry.set_password(password)?;
-        Ok(())
+        // Find UUID for repo_name
+        if let Some(bookmark) = self.bookmarks.iter().find(|b| b.name == repo_name) {
+            if let Ok(uuid) = Uuid::parse_str(&bookmark.uuid) {
+                credentials::store_password(&uuid, password)?;
+                return Ok(());
+            }
+        }
+        // Fallback for legacy or missing UUID (should not happen with new logic)
+        // But we can't easily store without UUID in the new system.
+        // For now, we'll error if UUID is missing.
+        anyhow::bail!("Repository UUID not found for {}", repo_name)
     }
 
     pub fn get_password(&self, repo_name: &str) -> anyhow::Result<String> {
-        let account = format!("borgrs_{}", repo_name);
-        let entry = Entry::new(KEYRING_SERVICE, &account)?;
-        let password = entry.get_password()?;
-        Ok(password)
+        if let Some(bookmark) = self.bookmarks.iter().find(|b| b.name == repo_name) {
+            if let Ok(uuid) = Uuid::parse_str(&bookmark.uuid) {
+                return credentials::get_password(&uuid);
+            }
+        }
+        anyhow::bail!("Repository UUID not found for {}", repo_name)
     }
 }

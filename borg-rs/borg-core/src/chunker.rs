@@ -195,7 +195,7 @@ impl ChunkerConfig {
             },
             ChunkerProfile::Size64M => Self {
                 min_size: 16 * 1024 * 1024,    // 16 MiB
-                avg_size: 64 * 1024 * 1024,    // 64 MiB
+                avg_size: 48 * 1024 * 1024,    // 48 MiB (Reduced from 64MB to allow variance)
                 max_size: 64 * 1024 * 1024,    // 64 MiB (Limit)
             },
         }
@@ -290,7 +290,7 @@ impl Chunker {
 
         let mut chunks = Vec::new();
         
-        // Wrap iteration in a way that we could catch issues if it was possible, 
+        // Wrap iteration in a way that we could catch issues if it was possible,
         // but here we just iterate. FastCDC::new already performed assertions in some versions.
         for chunk_info in chunker {
             let chunk_data = data[chunk_info.offset..chunk_info.offset + chunk_info.length].to_vec();

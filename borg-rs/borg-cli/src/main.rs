@@ -11,7 +11,6 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, Args};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-use borg_core::chunker::ChunkerProfile;
 
 /// Borg-Rust - Deduplicating backup program
 #[derive(Parser, Debug)]
@@ -69,7 +68,7 @@ enum Commands {
     Init(InitArgs),
 
     /// Create a new backup archive
-    Create(CreateArgs),
+    Create(commands::create::CreateArgs),
 
     /// Restore files from an archive
     Restore(RestoreArgs),
@@ -159,105 +158,6 @@ struct InitArgs {
     /// Recovery set overhead percentage (7, 13, 25)
     #[arg(long, value_parser = clap::value_parser!(u8))]
     recovery_set: Option<u8>,
-}
-
-#[derive(Args, Debug)]
-struct CreateArgs {
-    /// Manually specify archive name, otherwise a unique name is generated
-    #[arg(long = "force-archive-name")]
-    archive: Option<String>,
-
-    /// Paths to back up
-    #[arg(required = true)]
-    paths: Vec<PathBuf>,
-
-    /// WebDAV username
-    #[arg(long, value_name = "USER")]
-    webdav_user: Option<String>,
-
-    /// WebDAV password
-    #[arg(long, value_name = "PASS")]
-    webdav_pass: Option<String>,
-
-    /// Exclude paths matching pattern
-    #[arg(short, long, action = clap::ArgAction::Append)]
-    exclude: Vec<String>,
-
-    /// Read exclude patterns from file
-    #[arg(long, action = clap::ArgAction::Append)]
-    exclude_from: Vec<PathBuf>,
-
-    /// Exclude directories containing CACHEDIR.TAG
-    #[arg(long)]
-    exclude_caches: bool,
-
-    /// Exclude directories containing specified file
-    #[arg(long, action = clap::ArgAction::Append)]
-    exclude_if_present: Vec<String>,
-
-    /// Compression algorithm (none, lz4, zstd, zlib, lzma, xz)
-    #[arg(short, long, default_value = "zstd")]
-    compression: String,
-
-    /// Compression level
-    #[arg(long)]
-    compression_level: Option<u32>,
-
-    /// Stay in same filesystem (don't cross mount points)
-    #[arg(short = 'x', long)]
-    one_file_system: bool,
-
-    /// Open and read special files
-    #[arg(long)]
-    read_special: bool,
-
-    /// Store numeric user/group IDs only
-    #[arg(long)]
-    numeric_ids: bool,
-
-    /// Don't store access times
-    #[arg(long)]
-    noatime: bool,
-
-    /// Exclude files flagged nodump
-    #[arg(long)]
-    exclude_nodump: bool,
-
-    /// Add a comment to the archive
-    #[arg(long, required = true)]
-    comment: Option<String>,
-
-    /// Add tags to the archive
-    #[arg(long, action = clap::ArgAction::Append, required = true)]
-    tags: Option<Vec<String>>,
-
-    /// Timestamp for archive (ISO format or "now")
-    #[arg(long)]
-    timestamp: Option<String>,
-
-    /// Checkpoint interval in seconds
-    #[arg(long, default_value = "1800")]
-    checkpoint_interval: u64,
-
-    /// Force a specific chunker profile (e.g., 1mb, 4mb, default)
-    #[arg(long)]
-    force_chunk_profile: Option<ChunkerProfile>,
-
-    /// Dry run (don't create archive)
-    #[arg(short = 'n', long)]
-    dry_run: bool,
-
-    /// Print statistics
-    #[arg(short, long)]
-    stats: bool,
-
-    /// Print file list
-    #[arg(long)]
-    list: bool,
-
-    /// Print files with status (A=added, M=modified, etc.)
-    #[arg(long)]
-    filter: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -458,7 +358,7 @@ struct PruneArgs {
     #[arg(long, short = 'y')]
     keep_yearly: Option<u32>,
 
-    /// Only consider archives matching prefix
+    /// Prefix to match archives for pruning
     #[arg(long)]
     prefix: Option<String>,
 
