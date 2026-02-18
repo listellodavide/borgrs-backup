@@ -14,6 +14,7 @@ use borg_core::compression::CompressionConfig;
 use chrono::{Local, TimeZone};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 pub fn generate_managed_archive_name() -> String {
     let now = Local::now();
@@ -401,6 +402,30 @@ pub async fn list_archive_files(
         .collect();
 
     Ok(entries)
+}
+
+pub async fn export_repo_key(
+    repo_path: &str,
+    repo_password: Option<&str>,
+) -> Result<String> {
+    let storage = if repo_path.starts_with("/") || repo_path.contains(":\\") {
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
+    } else {
+        StorageConfig::Local {
+            path: PathBuf::from(repo_path),
+        }
+    };
+
+    let op = build_operator(storage).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let repo = Repository::open(op, repo_path.to_string(), repo_password)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let key_bytes = repo.export_key().map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    Ok(BASE64.encode(key_bytes))
 }
 
 #[cfg(test)]

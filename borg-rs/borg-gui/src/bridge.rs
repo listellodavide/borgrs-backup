@@ -274,6 +274,8 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                                 w.global::<RestoreLogic>().invoke_start_restore();
                             } else if action.as_str() == "save_scheduled_task" {
                                 w.global::<SchedulerLogic>().invoke_save_task();
+                            } else if action.as_str() == "export_key" {
+                                w.global::<DashboardLogic>().invoke_export_key_clicked();
                             } else {
                                 w.global::<DashboardLogic>().invoke_backup_clicked();
                             }
@@ -294,6 +296,85 @@ pub fn init_bridge(window: &MainWindow, state: Arc<Mutex<RustAppState>>) {
                 let wizard = window.global::<NewArchiveWizardLogic>();
                 wizard.set_current_step(0);
                 wizard.set_backup_paths(std::rc::Rc::new(slint::VecModel::default()).into());
+            }
+        }
+    });
+
+    dashboard.on_export_key_clicked({
+        let window_weak = window_weak.clone();
+        let state_clone = state.clone();
+        move || {
+            if let Some(window) = window_weak.upgrade() {
+                let dashboard = window.global::<DashboardLogic>();
+                let active_index = dashboard.get_active_repo_index();
+
+                if active_index < 0 {
+                    dashboard.set_terminal_text("Please select a repository first.".into());
+                    return;
+                }
+
+                let (repo_path, repo_password) = {
+                    let s = state_clone.lock().unwrap();
+                    if let Some(bm) = s.bookmarks.get(active_index as usize) {
+                        let pwd = s.session_passwords.get(&bm.path).cloned();
+                        (bm.path.clone(), pwd)
+                    } else {
+                        return;
+                    }
+                };
+
+                if repo_password.is_none() {
+                    let app = window.global::<AppState>();
+                    app.set_pending_auth_action("export_key".into());
+                    app.set_pending_auth_repo_path(repo_path.into());
+                    app.set_show_password_dialog(true);
+                    app.set_password_dialog_message("Enter passphrase to export key:".into());
+                    return;
+                }
+
+                // Export key
+                let window_weak2 = window_weak.clone();
+                let repo_path_clone = repo_path.clone();
+                let password_clone = repo_password.clone();
+
+                tokio::spawn(async move {
+                    let res = crate::commands::export_repo_key(&repo_path_clone, password_clone.as_deref()).await;
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = window_weak2.upgrade() {
+                            match res {
+                                Ok(key_base64) => {
+                                    // Open save dialog
+                                    let w_weak3 = w.as_weak();
+                                    tokio::task::spawn_blocking(move || {
+                                        let file = rfd::FileDialog::new()
+                                            .set_file_name("borg-recovery.key")
+                                            .save_file();
+
+                                        if let Some(path) = file {
+                                            if let Err(e) = std::fs::write(&path, key_base64) {
+                                                let _ = slint::invoke_from_event_loop(move || {
+                                                    if let Some(w) = w_weak3.upgrade() {
+                                                        w.global::<DashboardLogic>().set_terminal_text(format!("Failed to save key: {}", e).into());
+                                                    }
+                                                });
+                                            } else {
+                                                let _ = slint::invoke_from_event_loop(move || {
+                                                    if let Some(w) = w_weak3.upgrade() {
+                                                        w.global::<DashboardLogic>().set_terminal_text(format!("Key exported to {}", path.display()).into());
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    });
+                                }
+                                Err(e) => {
+                                    w.global::<DashboardLogic>().set_terminal_text(format!("Failed to export key: {}", e).into());
+                                }
+                            }
+                        }
+                    });
+                });
             }
         }
     });

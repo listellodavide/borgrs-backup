@@ -13,6 +13,58 @@ import { ArchiveFilesDialog } from "archive_files_dialog.slint";
 // --- Logic Globals ---
 // Note: Logic globals are now defined in globals.slint for consistency
 
+component MenuPopup inherits PopupWindow {
+    callback export_key();
+    Rectangle {
+        background: #333;
+        border-color: #555;
+        border-width: 1px;
+        width: 150px;
+        height: 40px;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => {
+                root.export_key();
+                root.close();
+            }
+
+            HorizontalLayout {
+                padding: 10px;
+                Text {
+                    text: "Export Key...";
+                    color: white;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+component MenuItem inherits Rectangle {
+    in property <string> text;
+    in property <color> text-color: white;
+    callback clicked;
+
+    // Auto-size width based on text content plus padding
+    width: label.preferred-width + 20px;
+
+    label := Text {
+        text: root.text;
+        color: root.text-color;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    TouchArea {
+        clicked => { root.clicked(); }
+        mouse-cursor: pointer;
+    }
+}
+
 // --- Main Window Component ---
 
 export component MainWindow inherits Window {
@@ -20,21 +72,71 @@ export component MainWindow inherits Window {
     min-width: 1000px;
     min-height: 700px;
 
-    HorizontalLayout {
-        Sidebar {
-            width: 250px;
+    VerticalLayout {
+        // Menu Bar
+        Rectangle {
+            height: 30px;
+            background: #2d2d2d;
+
+            // Bottom border simulation
+            Rectangle {
+                width: 100%;
+                height: 1px;
+                y: parent.height - 1px;
+                background: #444;
+            }
+
+            HorizontalLayout {
+                padding-left: 5px;
+                alignment: start;
+                spacing: 5px;
+
+                MenuItem {
+                    text: "File";
+                    clicked => {
+                        file_menu.show();
+                    }
+                }
+
+                MenuItem {
+                    text: "Edit";
+                }
+
+                MenuItem {
+                    text: "View";
+                }
+
+                MenuItem {
+                    text: "Repository";
+                    text-color: #00ff00; // Green
+                }
+            }
+
+            file_menu := MenuPopup {
+                x: 5px;
+                y: 30px;
+                export_key => {
+                    DashboardLogic.export_key_clicked();
+                }
+            }
         }
 
-        Rectangle {
-            if (AppState.current_view == "dashboard") : DashboardView {}
-            if (AppState.current_view == "init") : InitWizardView {}
-            if (AppState.current_view == "restore") : RestoreView {}
-            if (AppState.current_view == "new_archive") : NewArchiveWizardView {}
-            if (AppState.current_view == "scheduled_tasks") : SchedulerView {}
+        HorizontalLayout {
+            Sidebar {
+                width: 250px;
+            }
 
-            if (AppState.show_password_dialog) : PasswordDialog { z: 100; }
-            if (ArchiveContentLogic.show_dialog) : ArchiveContentView { z: 90; }
-            if (ArchiveFilesLogic.show_archive_files_dialog) : ArchiveFilesDialog { z: 110; }
+            Rectangle {
+                if (AppState.current_view == "dashboard") : DashboardView {}
+                if (AppState.current_view == "init") : InitWizardView {}
+                if (AppState.current_view == "restore") : RestoreView {}
+                if (AppState.current_view == "new_archive") : NewArchiveWizardView {}
+                if (AppState.current_view == "scheduled_tasks") : SchedulerView {}
+
+                if (AppState.show_password_dialog) : PasswordDialog { z: 100; }
+                if (ArchiveContentLogic.show_dialog) : ArchiveContentView { z: 90; }
+                if (ArchiveFilesLogic.show_archive_files_dialog) : ArchiveFilesDialog { z: 110; }
+            }
         }
     }
 }
